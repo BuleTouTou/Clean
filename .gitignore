@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+data/
+outputs/
+~$*.xlsx
+北京楼盘字典.xlsx
+北京-单元楼盘字典.xlsx
+售房数据导入模版.xlsx
+租房数据导入模版 .xlsx
+.DS_Store
+Thumbs.db

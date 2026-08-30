@@ -13,7 +13,22 @@ function send<T>(method: PromiseLike<unknown>): Promise<T> {
 export const api = {
   status: () => send<Record<string, unknown>>(generated.getStatus()),
   createTask: (kind: BatchKind) => send<{ taskId: string; headers: string[] }>(generated.createTask({ data: { kind } })),
-  upload: (taskId: string, file: File) => send<Record<string, unknown>>(generated.uploadSourceFile({ data: file, headers: { "X-Task-Id": taskId, "X-Filename": encodeURIComponent(file.name) } })),
+  upload: (taskId: string, file: File) => {
+    // Alova's fetch adapter does not treat File as a special request body in
+    // all environments and may JSON-serialize it to `{}`. Wrap it as Blob so
+    // the original XLSX bytes are sent unchanged.
+    const body = new Blob([file], { type: file.type || "application/octet-stream" });
+    return send<Record<string, unknown>>(
+      generated.uploadSourceFile({
+        data: body,
+        headers: {
+          "Content-Type": body.type,
+          "X-Task-Id": taskId,
+          "X-Filename": encodeURIComponent(file.name),
+        },
+      }),
+    );
+  },
   selectSheet: (taskId: string, sheet: SheetInfo) => send<Record<string, any>>(generated.selectSheet({ data: { taskId, sheet: sheet.name, headerRow: sheet.headerRow } })),
   mapping: (taskId: string, mapping: Record<string, string>) => send<Record<string, any>>(generated.saveMapping({ data: { taskId, mapping } })),
   review: (taskId: string, selected: Record<string, string>, entrustDate: string) => send<{ ok: boolean }>(generated.reviewEstate({ data: { taskId, selected, entrustDate } })),

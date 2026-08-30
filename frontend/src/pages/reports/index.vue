@@ -187,12 +187,11 @@ const reportColumns = [
         :data="filteredReports"
         :bordered="false"
         :single-line="false"
-      />
-      <n-empty
-        v-if="!reportQuery.isLoading.value && !filteredReports.length"
-        description="暂无历史报告"
-        class="py-16"
-      />
+      >
+        <template #empty>
+          <n-empty description="暂无历史报告" class="py-16" />
+        </template>
+      </n-data-table>
       <div class="mt-5 flex flex-wrap items-center justify-end gap-3">
         <n-select
           :value="reportPageSize"

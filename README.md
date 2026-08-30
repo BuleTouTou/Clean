@@ -184,7 +184,8 @@ cd ..
 │   ├── src/api.ts            # 现有业务兼容层（生成代码稳定后逐步替换）
 │   ├── src/generated/       # Worma 生成的 Alova 调用代码（不要手工编辑）
 │   ├── src/main.ts           # TypeScript 入口
-│   └── src/styles/           # 页面样式源码
+│   ├── src/assets/            # 全局资源和 Tailwind CSS 入口
+│   │   └── tailwind.css
 ├── frontend/dist/            # Vite 构建产物（不要直接编辑）
 ├── resources/                # 楼盘字典和导入模板（业务资源目录）
 │   ├── 北京楼盘字典.xlsx

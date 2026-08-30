@@ -3,7 +3,7 @@ import { VueQueryPlugin, QueryClient } from "@tanstack/vue-query";
 import { createRouter, createWebHistory } from "vue-router";
 import { routes } from "vue-router/auto-routes";
 import App from "./App.vue";
-import "./styles/tailwind.css";
+import "./assets/tailwind.css";
 
 const app = createApp(App);
 app.use(VueQueryPlugin, { queryClient: new QueryClient() });

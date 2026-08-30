@@ -568,11 +568,21 @@ def build_output(task, clean_only=False):
     stamp=datetime.now().strftime("%Y%m%d_%H%M%S"); prefix="售房" if kind=="sale" else "租房"
     outdir=OUTPUTS/task["id"]; outdir.mkdir(parents=True,exist_ok=True)
     outpath=outdir/f"{prefix}清洗导入_{stamp}.xlsx"; wb.save(outpath)
-    report={"原始文件名":task["original_name"],"类型":"出售" if kind=="sale" else "出租","任务开始时间":task["started"],"委托日期":task["entrust_date"],"原始记录数":len(task["rows"]),"最终输出记录数":len(output),"阻断异常数量":len(exceptions),"规则版本":RULE_VERSION,"完成时间":datetime.now().isoformat(timespec="seconds"),"清洗规则":rule_snapshot(task)}
-    for name,records in (("审计日志.csv",audit),("异常清单.csv",exceptions)):
-        with (outdir/name).open("w",encoding="utf-8-sig",newline="") as f:
-            if records:
-                w=csv.DictWriter(f,fieldnames=list(records[0])); w.writeheader(); w.writerows(records)
+    report={
+        "原始文件名": task["original_name"],
+        "类型": "出售" if kind=="sale" else "出租",
+        "任务开始时间": task["started"],
+        "委托日期": task["entrust_date"],
+        "原始记录数": len(task["rows"]),
+        "最终输出记录数": len(output),
+        "阻断异常数量": len(exceptions),
+        "审计记录数": len(audit),
+        "规则版本": RULE_VERSION,
+        "完成时间": datetime.now().isoformat(timespec="seconds"),
+        "清洗规则": rule_snapshot(task),
+        "异常详情": exceptions,
+        "审计记录": audit,
+    }
     storage = get_storage()
     artifacts = {}
     output_url = None
@@ -580,7 +590,7 @@ def build_output(task, clean_only=False):
     if storage is not None:
         if task.get("source_artifact"):
             artifacts["原始上传文件"] = task["source_artifact"]
-        artifact_paths = [outpath, outdir / "审计日志.csv", outdir / "异常清单.csv"]
+        artifact_paths = [outpath]
         for artifact_path in artifact_paths:
             if artifact_path.exists():
                 object_key = f"housing-cleaner/{task['id']}/{artifact_path.name}"

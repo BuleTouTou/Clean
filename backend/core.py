@@ -425,6 +425,45 @@ def save_rules(task):
         if x.get("selected"): rules.setdefault("buildings",{})[x["key"]]=x["selected"]
     jsave(RULES_FILE,rules)
 
+def rule_snapshot(task):
+    """生成随历史报告保存的规则快照，保证报告可复核且不依赖当前 rules.json。"""
+    estate_rules=[]
+    for key, decision in task.get("estate_auto", {}).items():
+        estate=decision.get("estate", {})
+        estate_rules.append({
+            "原始键": key,
+            "标准小区": estate_output_name(estate),
+            "匹配方式": decision.get("method", ""),
+            "置信度": decision.get("confidence", 0),
+            "是否人工确认": decision.get("method") == "人工确认",
+        })
+    for review in task.get("estate_reviews", []):
+        selected=review.get("selected", "")
+        if selected:
+            estate_rules.append({
+                "原始键": review.get("key", review.get("raw", "")),
+                "标准小区": selected,
+                "匹配方式": "人工确认",
+                "置信度": 1,
+                "是否人工确认": True,
+            })
+    building_rules=[
+        {
+            "原始键": review.get("key", ""),
+            "标准栋座": review.get("selected", ""),
+            "是否人工确认": True,
+        }
+        for review in task.get("building_reviews", [])
+        if review.get("selected")
+    ]
+    return {
+        "版本": RULE_VERSION,
+        "来源结构": task.get("source_key", ""),
+        "字段映射": task.get("mapping", {}),
+        "小区匹配": estate_rules,
+        "栋座匹配": building_rules,
+    }
+
 def build_output(task, clean_only=False):
     kind=task["kind"]; info=template_info(kind); original_sig=task["template_signature"]
     if info["signature"]!=original_sig: raise ValueError("模板在任务开始后发生变化，请新建任务并重新确认字段")
@@ -528,7 +567,7 @@ def build_output(task, clean_only=False):
     stamp=datetime.now().strftime("%Y%m%d_%H%M%S"); prefix="售房" if kind=="sale" else "租房"
     outdir=OUTPUTS/task["id"]; outdir.mkdir(parents=True,exist_ok=True)
     outpath=outdir/f"{prefix}清洗导入_{stamp}.xlsx"; wb.save(outpath)
-    report={"原始文件名":task["original_name"],"类型":"出售" if kind=="sale" else "出租","任务开始时间":task["started"],"委托日期":task["entrust_date"],"原始记录数":len(task["rows"]),"最终输出记录数":len(output),"阻断异常数量":len(exceptions),"规则版本":RULE_VERSION,"完成时间":datetime.now().isoformat(timespec="seconds")}
+    report={"原始文件名":task["original_name"],"类型":"出售" if kind=="sale" else "出租","任务开始时间":task["started"],"委托日期":task["entrust_date"],"原始记录数":len(task["rows"]),"最终输出记录数":len(output),"阻断异常数量":len(exceptions),"规则版本":RULE_VERSION,"完成时间":datetime.now().isoformat(timespec="seconds"),"清洗规则":rule_snapshot(task)}
     (outdir/"清洗报告.json").write_text(json.dumps(report,ensure_ascii=False,indent=2),"utf-8")
     for name,records in (("审计日志.csv",audit),("异常清单.csv",exceptions)):
         with (outdir/name).open("w",encoding="utf-8-sig",newline="") as f:

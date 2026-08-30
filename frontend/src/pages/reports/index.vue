@@ -7,11 +7,13 @@ import {
   NDataTable,
   NEmpty,
   NInput,
+  NModal,
   NPagination,
   NSelect,
   NSpace,
   NSpin,
   NTag,
+  NCode,
   useMessage,
 } from "naive-ui";
 import { api, type BatchKind, type ReportItem } from "../../api";
@@ -20,6 +22,8 @@ const message = useMessage();
 const search = ref("");
 const reportPage = ref(1);
 const reportKind = ref<BatchKind | undefined>();
+const showRules = ref(false);
+const selectedReport = ref<ReportItem | null>(null);
 
 const reportQuery = useQuery({
   queryKey: computed(() => ["reports", reportPage.value, reportKind.value]),
@@ -42,6 +46,15 @@ function downloadUrl(row: ReportItem) {
 function openReport(row: ReportItem) {
   if (row.output_file) window.open(downloadUrl(row), "_blank");
   else message.info("该报告没有可下载的文件");
+}
+
+function openRules(row: ReportItem) {
+  selectedReport.value = row;
+  showRules.value = true;
+}
+
+function formatRules(row: ReportItem | null) {
+  return JSON.stringify(row?.report?.["清洗规则"] ?? {}, null, 2);
 }
 
 const reportColumns = [
@@ -76,11 +89,12 @@ const reportColumns = [
   {
     title: "操作",
     key: "actions",
-    render: (row: ReportItem) => h(
-      NButton,
-      { size: "small", tertiary: true, onClick: () => openReport(row) },
-      { default: () => "查看报告" },
-    ),
+    render: (row: ReportItem) => h(NSpace, { size: 8 }, {
+      default: () => [
+        h(NButton, { size: "small", tertiary: true, onClick: () => openRules(row) }, { default: () => "查看规则" }),
+        h(NButton, { size: "small", tertiary: true, onClick: () => openReport(row) }, { default: () => "下载文件" }),
+      ],
+    }),
   },
 ];
 </script>
@@ -113,4 +127,14 @@ const reportColumns = [
       </div>
     </n-spin>
   </n-card>
+
+  <n-modal v-model:show="showRules" preset="card" title="清洗规则快照" style="width: min(960px, calc(100vw - 32px));">
+    <template v-if="selectedReport?.report?.['清洗规则']">
+      <p class="mb-4 text-sm text-slate-500">
+        以下内容是该任务导出时实际使用的规则快照，不会随当前规则变化而改变。
+      </p>
+      <n-code :code="formatRules(selectedReport)" language="json" word-wrap />
+    </template>
+    <n-empty v-else description="该历史报告没有保存清洗规则快照" class="py-12" />
+  </n-modal>
 </template>

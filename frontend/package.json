@@ -7,7 +7,7 @@
     "build": "vite build",
     "dev": "vite --host 127.0.0.1",
     "check": "tsc --noEmit",
-    "openapi:export": "uv run --no-cache --directory .. python -m backend.export_openapi --output backend/openapi.json",
+    "openapi:export": "uv run --no-cache --directory .. --project backend python -m backend.export_openapi --output backend/openapi.json",
     "worma:gen": "bun run openapi:export && worma gen -p .",
     "api:gen": "bun run worma:gen"
   },

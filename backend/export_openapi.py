@@ -14,7 +14,7 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("backend/openapi.json"),
+        default=Path(__file__).resolve().parent / "openapi.json",
         help="输出文件路径（相对于当前工作目录）",
     )
     args = parser.parse_args()

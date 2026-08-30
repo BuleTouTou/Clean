@@ -100,5 +100,5 @@ def test_real_data_file():
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        raise SystemExit("用法：uv run python backend/tests/test_real_data.py /path/to/source.xlsx")
+        raise SystemExit("用法：uv run --project backend python backend/tests/test_real_data.py /path/to/source.xlsx")
     main(sys.argv[1])

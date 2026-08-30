@@ -90,8 +90,8 @@ backend/
 
 - macOS、Linux 或 Windows 10/11
 - [uv](https://docs.astral.sh/uv/)（负责 Python 版本、虚拟环境和依赖管理）
-- Python 3.12（由 `.python-version` 固定；项目兼容 Python 3.10–3.13）
-- Python 依赖：见 `pyproject.toml`
+- Python 3.12（由 `backend/.python-version` 固定；项目兼容 Python 3.10–3.13）
+- Python 依赖：见 `backend/pyproject.toml`
 - Bun 1.4+（Vite 前端的安装、开发和构建运行时）
 - 读取旧版 `.xls`：需要安装 LibreOffice，并确保 `soffice` 在 PATH 中
 
@@ -112,10 +112,10 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 安装依赖并准备 Python：
 
 ```bash
-uv sync
+uv sync --project backend
 ```
 
-`uv sync` 会读取 `.python-version` 和 `pyproject.toml`，自动安装 Python 3.12（本机没有时会下载 uv 管理的版本）、创建项目虚拟环境并安装依赖。日常运行不需要手动激活虚拟环境。
+`uv sync --project backend` 会读取 `backend/.python-version` 和 `backend/pyproject.toml`，自动安装 Python 3.12（本机没有时会下载 uv 管理的版本）、在 `backend/.venv/` 创建虚拟环境并安装后端依赖。日常运行不需要手动激活虚拟环境。
 
 首次使用还需要准备前端构建产物：
 
@@ -152,7 +152,7 @@ cd ..
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `UV_PYTHON` | `.python-version` | 临时覆盖 uv 使用的 Python 解释器 |
+| `UV_PYTHON` | `backend/.python-version` | 临时覆盖 uv 使用的 Python 解释器 |
 
 ## 11. 目录约定
 
@@ -161,6 +161,12 @@ cd ..
 ├── backend/                  # FastAPI 后端包
 │   ├── app.py                # ASGI 应用和 API 路由
 │   ├── core.py               # 文件处理、匹配、清洗和导出核心逻辑
+│   ├── db.py                 # SQLite 历史报告读写
+│   ├── export_openapi.py     # 导出 OpenAPI 规范供 Worma 使用
+│   ├── pyproject.toml        # uv 项目配置和依赖声明
+│   ├── uv.lock               # 后端依赖锁定文件
+│   ├── .python-version       # 默认 Python 版本（3.12）
+│   ├── requirements.txt      # 兼容传统 pip 的依赖清单
 │   ├── tests/                # 后端自动化测试
 │   │   ├── test_smoke.py
 │   │   └── test_real_data.py
@@ -180,14 +186,11 @@ cd ..
 │   ├── 北京-单元楼盘字典.xlsx
 │   ├── 售房数据导入模版.xlsx
 │   └── 租房数据导入模版 .xlsx
-├── pyproject.toml            # uv 项目配置和依赖声明
-├── .python-version           # 默认 Python 版本（3.12）
-├── requirements.txt          # 兼容传统 pip 的依赖清单
 ├── data/                     # 上传文件、规则和下载注册信息（Git 忽略）
 └── outputs/                  # 每个任务的导出结果（Git 忽略）
 ```
 
-首次执行 `uv sync` 后会生成 `uv.lock`。依赖版本稳定后，建议将 `uv.lock` 一并提交，以保证不同机器使用相同版本的依赖。
+首次执行 `uv sync --project backend` 后会使用 `backend/uv.lock`。依赖版本稳定后，建议将该锁文件一并提交，以保证不同机器使用相同版本的后端依赖。
 
 ## 12. 输出文件规范
 
@@ -244,7 +247,7 @@ bun run api:gen
 基础语法检查：
 
 ```bash
-uv run python -m py_compile backend/core.py backend/app.py backend/tests/test_smoke.py backend/tests/test_real_data.py
+uv run --project backend python -m py_compile backend/core.py backend/app.py backend/tests/test_smoke.py backend/tests/test_real_data.py
 ```
 
 前端依赖安装和 TypeScript 检查：
@@ -272,13 +275,13 @@ bun run dev
 冒烟测试：
 
 ```bash
-uv run pytest backend/tests/test_smoke.py
+uv run --project backend pytest backend/tests/test_smoke.py
 ```
 
 真实文件测试：
 
 ```bash
-uv run python backend/tests/test_real_data.py /path/to/source.xlsx
+uv run --project backend python backend/tests/test_real_data.py /path/to/source.xlsx
 ```
 
 运行完整测试前，必须先准备第 8 节列出的四个基础 Excel 文件。

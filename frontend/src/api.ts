@@ -1,90 +1,24 @@
+import * as generated from "./generated/services/general";
+
 export type BatchKind = "sale" | "rent";
+export interface SheetInfo { name: string; hidden: boolean; rows: number; cols: number; headerRow: number; preview: string[][]; }
+export interface MappingSuggestion { source: string; target: string; confidence: number; reason: string; samples: string[]; }
+export interface ReportItem { id: number; task_id: string; kind: BatchKind; original_name: string; entrust_date: string; started_at: string; completed_at: string; input_rows: number; output_rows: number; blocking_count: number; audit_count: number; output_file: string | null; report: Record<string, unknown>; }
+export interface ReportsResponse { items: ReportItem[]; total: number; page: number; pageSize: number; }
 
-export interface FileStatus {
-  key: string;
-  name: string;
-  exists: boolean;
-  size: number;
-  mtime: number | null;
-}
-
-export interface SheetInfo {
-  name: string;
-  hidden: boolean;
-  rows: number;
-  cols: number;
-  headerRow: number;
-  preview: string[][];
-  encoding?: string;
-  delimiter?: string;
-}
-
-export interface MappingSuggestion {
-  source: string;
-  target: string;
-  confidence: number;
-  reason: string;
-  samples: string[];
-}
-
-export interface StatusResponse {
-  files: FileStatus[];
-  tasks: number;
-}
-
-export interface TaskResponse {
-  taskId: string;
-  headers: string[];
-}
-
-export interface UploadResponse {
-  sheets: SheetInfo[];
-  received: { name: string; size: number; sizeMB: number };
-}
-
-export interface SelectSheetResponse {
-  headers: string[];
-  rows: number;
-  suggestions: MappingSuggestion[];
-  targets: string[];
-}
-
-export interface ApiError {
-  error?: string;
-  detail?: string;
-}
-
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
-  const text = await response.text();
-  let payload: T | ApiError;
-  try {
-    payload = JSON.parse(text) as T | ApiError;
-  } catch {
-    throw new Error(response.status === 404 ? "当前端口运行的是旧版服务，请重新启动工具" : "服务器返回了无法识别的内容");
-  }
-  if (!response.ok) {
-    const error = payload as ApiError;
-    throw new Error(error.error ?? error.detail ?? "请求失败");
-  }
-  return payload as T;
+function send<T>(method: PromiseLike<unknown>): Promise<T> {
+  return Promise.resolve(method).then((data) => data as T);
 }
 
 export const api = {
-  status: () => request<StatusResponse>("/api/status"),
-  createTask: (kind: BatchKind) => request<TaskResponse>("/api/task", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ kind }),
-  }),
-  upload: (taskId: string, file: File) => request<UploadResponse>("/api/upload", {
-    method: "POST",
-    headers: { "X-Task-Id": taskId, "X-Filename": encodeURIComponent(file.name) },
-    body: file,
-  }),
-  selectSheet: (taskId: string, sheet: SheetInfo) => request<SelectSheetResponse>("/api/select-sheet", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ taskId, sheet: sheet.name, headerRow: sheet.headerRow }),
-  }),
+  status: () => send<Record<string, unknown>>(generated.getStatus()),
+  createTask: (kind: BatchKind) => send<{ taskId: string; headers: string[] }>(generated.createTask({ data: { kind } })),
+  upload: (taskId: string, file: File) => send<Record<string, unknown>>(generated.uploadSourceFile({ data: file, headers: { "X-Task-Id": taskId, "X-Filename": encodeURIComponent(file.name) } })),
+  selectSheet: (taskId: string, sheet: SheetInfo) => send<Record<string, any>>(generated.selectSheet({ data: { taskId, sheet: sheet.name, headerRow: sheet.headerRow } })),
+  mapping: (taskId: string, mapping: Record<string, string>) => send<Record<string, any>>(generated.saveMapping({ data: { taskId, mapping } })),
+  review: (taskId: string, selected: Record<string, string>, entrustDate: string) => send<{ ok: boolean }>(generated.reviewEstate({ data: { taskId, selected, entrustDate } })),
+  buildingReview: (taskId: string, selected: Record<string, string>) => send<Record<string, any>>(generated.reviewBuilding({ data: { taskId, selected } })),
+  buildingConfirm: (taskId: string, selected: Record<string, string>, entrustDate: string) => send<{ ok: boolean }>(generated.confirmBuilding({ data: { taskId, selected, entrustDate } })),
+  export: (taskId: string, cleanOnly: boolean) => send<Record<string, any>>(generated.exportTask({ data: { taskId, cleanOnly } })),
+  reports: (page: number, pageSize: number, kind?: BatchKind) => send<ReportsResponse>(generated.listReports({ params: { page, pageSize, ...(kind ? { kind } : {}) } })),
 };

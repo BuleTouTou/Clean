@@ -37,6 +37,7 @@
 
 - **后端采用 FastAPI**：提供类型化请求校验、自动 OpenAPI 文档和 ASGI 并发模型，适合当前这种本地 API + 文件处理服务。生产启动入口为 `backend.app:app`，由 Uvicorn 承载。
 - **前端采用 TypeScript + Vite**：页面入口和 API 类型定义位于 `frontend/src/`，Vite 将 TypeScript、CSS 和 HTML 构建到 `frontend/dist/`，后端只负责托管构建产物。
+- **接口代码使用 Worma 生成**：Worma（`wormajs`）是 Alova 生态当前的 OpenAPI 生成工具。它读取 FastAPI 的 OpenAPI 文档，并生成 Alova 调用函数和 TypeScript 类型；不要再手写一份与后端接口重复的类型定义。
 - **代码边界**：清洗算法集中在 `backend/core.py`，新功能应优先放入 `backend/` 包；前端源码和构建产物均放在 `frontend/`，不要直接编辑 `frontend/dist/`。
 
 ## 5. 后端包结构
@@ -47,7 +48,10 @@
 backend/
 ├── __init__.py       # 包入口
 ├── app.py            # FastAPI 应用、请求模型、API 路由和静态文件挂载
-└── core.py           # 文件处理、匹配、清洗和导出核心逻辑
+├── core.py           # 文件处理、匹配、清洗和导出核心逻辑
+├── db.py             # SQLite 历史报告读写
+├── export_openapi.py # 导出 OpenAPI 规范供 Worma 使用
+└── tests/             # 后端测试
 ```
 
 `core.py` 当前仍是一个过渡中的核心模块，后续建议按以下边界继续拆分：
@@ -195,7 +199,9 @@ HOUSING_CLEANER_PORT=9000 HOUSING_CLEANER_OPEN_BROWSER=0 ./start.sh
 │   ├── index.html             # Vite 页面入口
 │   ├── package.json          # 前端开发依赖和脚本
 │   ├── tsconfig.json         # TypeScript 编译约束
-│   ├── src/api.ts            # 类型化 API 客户端
+│   ├── worma.config.ts       # OpenAPI → Alova 代码生成配置
+│   ├── src/api.ts            # 现有业务兼容层（生成代码稳定后逐步替换）
+│   ├── src/generated/       # Worma 生成的 Alova 调用代码（不要手工编辑）
 │   ├── src/main.ts           # TypeScript 入口
 │   └── src/styles/           # 页面样式源码
 ├── frontend/dist/            # Vite 构建产物（不要直接编辑）
@@ -242,6 +248,27 @@ HOUSING_CLEANER_PORT=9000 HOUSING_CLEANER_OPEN_BROWSER=0 ./start.sh
 | `/api/building-review` | POST | 生成栋座审核项 |
 | `/api/building-confirm` | POST | 保存栋座确认和委托日期 |
 | `/api/export` | POST | 生成导出文件 |
+| `/api/reports` | GET | 分页查询历史清洗报告 |
+| `/api/reports/{report_id}` | GET | 查询单条历史清洗报告 |
+
+FastAPI 同时自动提供 OpenAPI 文档：
+
+- `/openapi.json`：机器可读的 OpenAPI 规范。
+- `/docs`：Swagger UI 交互式文档。
+
+### 13.1 使用 Worma 生成前端 API
+
+前端使用 [Worma](https://worma.js.org)（当前包名 `wormajs`，官方命令为 `worma gen`）从后端 OpenAPI 文档生成 Alova 调用代码。生成配置位于 `frontend/worma.config.ts`，输出目录为 `frontend/src/generated/`。
+
+```bash
+cd frontend
+bun install
+bun run api:gen
+```
+
+`api:gen` 会先执行 `backend.export_openapi` 刷新临时 OpenAPI 文件，再运行 `worma gen -p .`。生成结果可以直接被 Vue 业务代码 import；生成目录中的文件不要手工修改，业务封装放在 `frontend/src/services/`。
+
+如果后端已经启动，也可以直接访问 `http://127.0.0.1:8765/openapi.json` 检查接口规范。Worma 生成器本身支持 Bun、Node.js、Deno 运行时；本项目统一使用 Bun 执行前端脚本。
 
 这些接口只绑定到 `127.0.0.1`，不应直接暴露到公网。
 

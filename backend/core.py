@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse, unquote
 
 import openpyxl
+from .db import init_db, save_report
 
 # core.py 位于 backend/ 包内，项目根目录是其父目录。
 ROOT = Path(__file__).resolve().parent.parent
@@ -20,7 +21,9 @@ RESOURCES = ROOT / "resources"
 RULES_FILE = DATA / "rules.json"
 DOWNLOADS_FILE = DATA / "downloads.json"
 STATIC = ROOT / "frontend" / "dist"
+DB_FILE = DATA / "housing_cleaner.sqlite3"
 for p in (DATA, UPLOADS, OUTPUTS, RESOURCES): p.mkdir(exist_ok=True)
+init_db(DB_FILE)
 
 FILES = {
     "estate": "北京楼盘字典.xlsx",
@@ -525,7 +528,7 @@ def build_output(task, clean_only=False):
     stamp=datetime.now().strftime("%Y%m%d_%H%M%S"); prefix="售房" if kind=="sale" else "租房"
     outdir=OUTPUTS/task["id"]; outdir.mkdir(parents=True,exist_ok=True)
     outpath=outdir/f"{prefix}清洗导入_{stamp}.xlsx"; wb.save(outpath)
-    report={"原始文件名":task["original_name"],"类型":"出售" if kind=="sale" else "出租","任务开始时间":task["started"],"委托日期":task["entrust_date"],"原始记录数":len(task["rows"]),"最终输出记录数":len(output),"阻断异常数量":len(exceptions),"规则版本":RULE_VERSION}
+    report={"原始文件名":task["original_name"],"类型":"出售" if kind=="sale" else "出租","任务开始时间":task["started"],"委托日期":task["entrust_date"],"原始记录数":len(task["rows"]),"最终输出记录数":len(output),"阻断异常数量":len(exceptions),"规则版本":RULE_VERSION,"完成时间":datetime.now().isoformat(timespec="seconds")}
     (outdir/"清洗报告.json").write_text(json.dumps(report,ensure_ascii=False,indent=2),"utf-8")
     for name,records in (("审计日志.csv",audit),("异常清单.csv",exceptions)):
         with (outdir/name).open("w",encoding="utf-8-sig",newline="") as f:
@@ -533,6 +536,7 @@ def build_output(task, clean_only=False):
                 w=csv.DictWriter(f,fieldnames=list(records[0])); w.writeheader(); w.writerows(records)
     download_id=register_download(outpath)
     task["last_export"]={"file":str(outpath.relative_to(ROOT)),"downloadId":download_id,"report":report,"audit":len(audit),"exceptions":exceptions}
+    save_report(DB_FILE, task["id"], kind, report, str(outpath.relative_to(ROOT)), len(audit))
     return task["last_export"]
 
 class Handler(BaseHTTPRequestHandler):

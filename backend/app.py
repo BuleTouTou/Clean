@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 # 清洗算法集中在包内 core 模块。
 from . import core as legacy
+from .db import get_report, list_reports
 
 
 class TaskRequest(BaseModel):
@@ -77,12 +78,25 @@ def on_startup() -> None:
         threading.Timer(1, lambda: webbrowser.open(url)).start()
 
 
-@app.get("/api/status")
+@app.get("/api/status", operation_id="getStatus")
 def status() -> dict[str, Any]:
     return {"files": legacy.file_status(), "tasks": len(legacy.TASKS)}
 
 
-@app.post("/api/task")
+@app.get("/api/reports", operation_id="listReports")
+def reports(page: int = 1, pageSize: int = 20, kind: Literal["sale", "rent"] | None = None) -> dict[str, Any]:
+    return list_reports(legacy.DB_FILE, page, pageSize, kind)
+
+
+@app.get("/api/reports/{report_id}", operation_id="getReport")
+def report_detail(report_id: int) -> dict[str, Any]:
+    item = get_report(legacy.DB_FILE, report_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="历史报告不存在")
+    return item
+
+
+@app.post("/api/task", operation_id="createTask")
 def create_task(body: TaskRequest) -> dict[str, Any]:
     try:
         missing = [item["name"] for item in legacy.file_status() if not item["exists"]]
@@ -102,7 +116,7 @@ def create_task(body: TaskRequest) -> dict[str, Any]:
         fail(exc)
 
 
-@app.post("/api/upload")
+@app.post("/api/upload", operation_id="uploadSourceFile")
 async def upload(request: Request) -> dict[str, Any]:
     try:
         task_id = request.headers.get("X-Task-Id", "")
@@ -123,7 +137,7 @@ async def upload(request: Request) -> dict[str, Any]:
         fail(exc)
 
 
-@app.post("/api/select-sheet")
+@app.post("/api/select-sheet", operation_id="selectSheet")
 def select_sheet(body: SheetRequest) -> dict[str, Any]:
     try:
         task = legacy.get_task(body.taskId)
@@ -136,7 +150,7 @@ def select_sheet(body: SheetRequest) -> dict[str, Any]:
         fail(exc)
 
 
-@app.post("/api/mapping")
+@app.post("/api/mapping", operation_id="saveMapping")
 def mapping(body: MappingRequest) -> dict[str, Any]:
     try:
         task = legacy.get_task(body.taskId)
@@ -147,7 +161,7 @@ def mapping(body: MappingRequest) -> dict[str, Any]:
         fail(exc)
 
 
-@app.post("/api/review")
+@app.post("/api/review", operation_id="reviewEstate")
 def review(body: ReviewRequest) -> dict[str, bool]:
     try:
         task = legacy.get_task(body.taskId)
@@ -160,7 +174,7 @@ def review(body: ReviewRequest) -> dict[str, bool]:
         fail(exc)
 
 
-@app.post("/api/building-review")
+@app.post("/api/building-review", operation_id="reviewBuilding")
 def building_review(body: ReviewRequest) -> dict[str, Any]:
     try:
         task = legacy.get_task(body.taskId)
@@ -169,7 +183,7 @@ def building_review(body: ReviewRequest) -> dict[str, Any]:
         fail(exc)
 
 
-@app.post("/api/building-confirm")
+@app.post("/api/building-confirm", operation_id="confirmBuilding")
 def building_confirm(body: ReviewRequest) -> dict[str, bool]:
     try:
         task = legacy.get_task(body.taskId)
@@ -183,7 +197,7 @@ def building_confirm(body: ReviewRequest) -> dict[str, bool]:
         fail(exc)
 
 
-@app.post("/api/export")
+@app.post("/api/export", operation_id="exportTask")
 def export(body: ExportRequest) -> dict[str, Any]:
     try:
         return legacy.build_output(legacy.get_task(body.taskId), body.cleanOnly)
@@ -191,7 +205,7 @@ def export(body: ExportRequest) -> dict[str, Any]:
         fail(exc)
 
 
-@app.get("/download/{token}", response_model=None)
+@app.get("/download/{token}", response_model=None, operation_id="downloadFile")
 def download(token: str) -> FileResponse | RedirectResponse:
     path = legacy.resolve_download(token)
     if path is None or not path.exists() or legacy.ROOT.resolve() not in path.resolve().parents:

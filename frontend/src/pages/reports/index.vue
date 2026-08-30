@@ -50,14 +50,15 @@ const filteredReports = computed(() => {
 });
 
 function downloadUrl(row: ReportItem) {
-  if (row.output_url) return row.output_url;
-  return row.output_file
-    ? `/download/${row.output_file.split(/[\\/]/).map(encodeURIComponent).join("/")}`
-    : "";
+  if (row.output_url || row.output_object_key || row.output_file) {
+    return `/api/reports/${encodeURIComponent(String(row.id))}/download`;
+  }
+  return "";
 }
 
 function openReport(row: ReportItem) {
-  if (row.output_file) window.open(downloadUrl(row), "_blank");
+  const url = downloadUrl(row);
+  if (url) window.open(url, "_blank");
   else message.info("该报告没有可下载的文件");
 }
 

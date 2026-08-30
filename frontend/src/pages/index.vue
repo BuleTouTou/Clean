@@ -190,7 +190,7 @@ async function exportFile(cleanOnly: boolean) {
         <n-button :type="kind === 'sale' ? 'primary' : 'default'" size="large" @click="kind = 'sale'">出售房源</n-button>
         <n-button :type="kind === 'rent' ? 'primary' : 'default'" size="large" @click="kind = 'rent'">出租房源</n-button>
       </n-space>
-      <div class="mt-6"><n-button type="primary" :disabled="!kind" @click="createTask">创建任务并上传文件</n-button></div>
+      <div class="mt-6 flex justify-end"><n-button type="primary" :disabled="!kind" @click="createTask">创建任务并上传文件</n-button></div>
     </n-card>
 
     <n-card v-else-if="step === 2" title="上传原始文件" class="shadow-sm">
@@ -219,7 +219,9 @@ async function exportFile(cleanOnly: boolean) {
           </tbody>
         </table>
       </div>
-      <n-button class="mt-6" type="primary" @click="confirmMapping">确认映射，检查楼盘</n-button>
+      <div class="mt-6 flex justify-end">
+        <n-button type="primary" @click="confirmMapping">确认映射 检查楼盘</n-button>
+      </div>
     </n-card>
 
     <n-card v-else-if="step === 4" title="楼盘审核" class="shadow-sm">
@@ -235,7 +237,9 @@ async function exportFile(cleanOnly: boolean) {
           </n-space>
         </n-radio-group>
       </div>
-      <n-button type="primary" @click="confirmEstate">保存确认并检查栋座</n-button>
+      <div class="mt-6 flex justify-end">
+        <n-button type="primary" @click="confirmEstate">保存确认并检查栋座</n-button>
+      </div>
     </n-card>
 
     <n-card v-else-if="step === 5" title="栋座审核" class="shadow-sm">
@@ -253,7 +257,9 @@ async function exportFile(cleanOnly: boolean) {
         <div class="mb-2 text-sm text-slate-500">统一委托日期</div>
         <n-date-picker v-model:value="entrustDate" type="date" />
       </div>
-      <n-button type="primary" @click="confirmBuilding">保存确认并进入导出</n-button>
+      <div class="mt-6 flex justify-end">
+        <n-button type="primary" @click="confirmBuilding">保存确认并进入导出</n-button>
+      </div>
     </n-card>
 
     <n-card v-else title="导出结果" class="shadow-sm">
@@ -261,12 +267,16 @@ async function exportFile(cleanOnly: boolean) {
       <div v-else class="mb-5 rounded-lg bg-emerald-50 p-4 text-emerald-800">
         已生成 {{ exportResult.report?.最终输出记录数 }} 条记录，阻断异常 {{ exportResult.report?.阻断异常数量 }} 条。
       </div>
-      <n-space>
-        <n-button type="primary" @click="exportFile(false)">导出全部数据</n-button>
-        <n-button secondary @click="exportFile(true)">仅导出无阻断异常</n-button>
-        <n-button v-if="exportResult?.ossUrl || exportResult?.downloadId" tag="a" :href="exportResult.ossUrl || '/download/' + exportResult.downloadId" target="_blank" tertiary>下载文件</n-button>
-      </n-space>
-      <div class="mt-6"><n-button text @click="resetTask">开始新任务</n-button></div>
+      <div class="flex justify-end">
+        <n-space v-if="!exportResult">
+          <n-button type="primary" @click="exportFile(false)">导出全部数据</n-button>
+          <n-button secondary @click="exportFile(true)">仅导出无阻断异常</n-button>
+        </n-space>
+        <n-space v-else>
+          <n-button type="primary" tag="a" :href="exportResult.downloadUrl || exportResult.ossUrl || '/download/' + exportResult.downloadId" target="_blank">下载文件</n-button>
+          <n-button secondary @click="resetTask">开始新任务</n-button>
+        </n-space>
+      </div>
     </n-card>
   </n-spin>
 </template>

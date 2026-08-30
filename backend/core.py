@@ -591,6 +591,7 @@ def build_output(task, clean_only=False):
     storage = get_storage()
     artifacts = {}
     output_url = None
+    download_url = None
     output_object_key = None
     if storage is not None:
         if task.get("source_artifact"):
@@ -604,6 +605,7 @@ def build_output(task, clean_only=False):
         output_info = artifacts[outpath.name]
         output_url = str(output_info["url"])
         output_object_key = str(output_info["objectKey"])
+        download_url = storage.presigned_get_url(output_object_key)
         shutil.rmtree(outdir)
         source_path = task.get("source_path")
         if source_path and Path(source_path).exists():
@@ -616,7 +618,14 @@ def build_output(task, clean_only=False):
         (outdir / "清洗报告.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), "utf-8")
         download_id = register_download(outpath)
         output_file = str(outpath.relative_to(ROOT))
-    task["last_export"]={"file":output_file,"downloadId":download_id,"ossUrl":output_url,"ossObjectKey":output_object_key,"artifacts":artifacts,"report":report,"audit":len(audit),"exceptions":exceptions}
+
+    # Uploads are isolated under data/uploads/<task_id>/; remove the
+    # temporary task directory after export in both local and OSS modes.
+    task_upload_dir = UPLOADS / task["id"]
+    if task_upload_dir.is_dir():
+        shutil.rmtree(task_upload_dir, ignore_errors=True)
+
+    task["last_export"]={"file":output_file,"downloadId":download_id,"ossUrl":output_url,"downloadUrl":download_url,"ossObjectKey":output_object_key,"artifacts":artifacts,"report":report,"audit":len(audit),"exceptions":exceptions}
     source_info = task.get("source_artifact") or {}
     save_report(
         DB_FILE,
@@ -671,9 +680,9 @@ class Handler(BaseHTTPRequestHandler):
                 info=template_info(kind); tid=uuid.uuid4().hex[:12]; TASKS[tid]={"id":tid,"kind":kind,"started":utc_now_iso(),"entrust_date":str(date.today()),"template_signature":info["signature"]}
                 return self.send_json({"taskId":tid,"headers":info["headers"]})
             if path=="/api/upload":
-                tid=self.headers.get("X-Task-Id"); name=unquote(self.headers.get("X-Filename","source.xlsx")); task=get_task(tid); ext=Path(name).suffix.lower()
+                tid=self.headers.get("X-Task-Id"); name=Path(unquote(self.headers.get("X-Filename","source.xlsx"))).name; task=get_task(tid); ext=Path(name).suffix.lower()
                 if ext not in (".csv",".xls",".xlsx"): raise ValueError("仅支持 CSV、XLS、XLSX")
-                fp=UPLOADS/f"{tid}{ext}"; fp.write_bytes(self.rfile.read(int(self.headers.get("Content-Length",0)))); fp,sheets=inspect_upload(fp)
+                task_upload_dir=UPLOADS/tid; task_upload_dir.mkdir(parents=True, exist_ok=True); fp=task_upload_dir/name; fp.write_bytes(self.rfile.read(int(self.headers.get("Content-Length",0)))); fp,sheets=inspect_upload(fp)
                 task.update({"path":fp,"original_name":name,"sheets":sheets}); return self.send_json({"sheets":sheets,"received":{"name":name,"size":fp.stat().st_size,"sizeMB":round(fp.stat().st_size/1024/1024,1)}})
             if path=="/api/select-sheet":
                 b=self.body(); task=get_task(b.get("taskId")); headers,rows=read_table(task["path"],b["sheet"],int(b["headerRow"])); task.update({"sheet":b["sheet"],"header_row":int(b["headerRow"]),"headers":headers,"rows":rows,"source_key":hashlib.sha256("|".join(map(norm,headers)).encode()).hexdigest()})

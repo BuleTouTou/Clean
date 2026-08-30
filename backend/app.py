@@ -85,6 +85,34 @@ def report_detail(report_id: int) -> dict[str, Any]:
     return item
 
 
+@app.get("/api/reports/{report_id}/download", response_model=None, operation_id="downloadReport")
+def download_report(report_id: int) -> FileResponse | RedirectResponse:
+    item = get_report(legacy.DB_FILE, report_id)
+    if item is None:
+        raise HTTPException(status_code=404, detail="历史报告不存在")
+
+    object_key = item.get("output_object_key")
+    if object_key:
+        storage = get_storage()
+        if storage is None:
+            raise HTTPException(status_code=503, detail="OSS 存储未启用")
+        return RedirectResponse(storage.presigned_get_url(str(object_key)))
+
+    output_file = item.get("output_file")
+    if output_file:
+        path = (legacy.ROOT / str(output_file)).resolve()
+        root = legacy.ROOT.resolve()
+        if root not in path.parents or not path.is_file():
+            raise HTTPException(status_code=404, detail="导出文件不存在")
+        return FileResponse(
+            path,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            filename=path.name,
+        )
+
+    raise HTTPException(status_code=404, detail="该报告没有可下载的文件")
+
+
 @app.post("/api/task", operation_id="createTask")
 def create_task(body: TaskRequest) -> dict[str, Any]:
     try:
@@ -114,7 +142,11 @@ async def upload(request: Request) -> dict[str, Any]:
         ext = Path(name).suffix.lower()
         if ext not in (".csv", ".xls", ".xlsx"):
             raise ValueError("仅支持 CSV、XLS、XLSX")
-        original_path = legacy.UPLOADS / f"{task_id}{ext}"
+        # Keep the original filename on disk while isolating each task in its
+        # own directory to avoid collisions between uploads with the same name.
+        task_upload_dir = legacy.UPLOADS / task_id
+        task_upload_dir.mkdir(parents=True, exist_ok=True)
+        original_path = task_upload_dir / name
         original_path.write_bytes(await request.body())
         path, sheets = legacy.inspect_upload(original_path)
         source_artifact = None

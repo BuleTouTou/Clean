@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import os
-import threading
-import webbrowser
 from datetime import date
 from pathlib import Path
 from typing import Any, Literal
@@ -67,15 +64,6 @@ async def http_exception_handler(_request: Request, exc: HTTPException) -> JSONR
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
     return JSONResponse(status_code=422, content={"error": "请求参数无效", "detail": exc.errors()})
-
-
-@app.on_event("startup")
-def on_startup() -> None:
-    port = int(os.environ.get("HOUSING_CLEANER_PORT", "8765"))
-    url = f"http://127.0.0.1:{port}"
-    print(f"房源数据清洗工具已启动：{url}")
-    if os.environ.get("HOUSING_CLEANER_OPEN_BROWSER", "1") == "1":
-        threading.Timer(1, lambda: webbrowser.open(url)).start()
 
 
 @app.get("/api/status", operation_id="getStatus")

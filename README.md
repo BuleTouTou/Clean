@@ -139,51 +139,20 @@ cd ..
 
 模板第一行必须是完整表头，不能存在空列。程序会在模板最后追加 `未匹配原因` 列。
 
-## 9. 启动方式
+## 9. 部署启动
 
-### 9.1 Windows
+本项目面向上线部署，不再提供 `start.bat`、`start.sh` 或 `start.command` 等命令行启动脚本。服务启动、停止、重启和健康检查统一交给部署平台或进程管理器（例如 Docker、systemd、Supervisor、Kubernetes 或云平台托管服务）。
 
-双击 [start.bat](./start.bat)。脚本会调用 `uv run uvicorn backend.app:app`，自动准备指定 Python 和依赖，然后打开浏览器。
-
-### 9.2 macOS
-
-推荐在 Finder 中双击 [start.command](./start.command)，或在终端运行：
-
-```bash
-chmod +x start.sh start.command   # 仅首次需要
-./start.sh
-```
-
-如果系统提示无法打开脚本，请右键选择“打开”，或改用终端运行。可以通过 `UV_PYTHON` 临时指定 Python 解释器：
-
-```bash
-UV_PYTHON=/path/to/python ./start.sh
-```
-
-### 9.3 Linux
-
-```bash
-chmod +x start.sh   # 仅首次需要
-./start.sh
-```
-
-脚本会调用 `uv run uvicorn backend.app:app`；服务启动后访问 <http://127.0.0.1:8765>。
-
-停止服务：在运行脚本的终端按 `Ctrl+C`。
+- 后端 ASGI 应用入口：`backend.app:app`，由部署平台配置 Uvicorn/Gunicorn 等 ASGI Server 承载。
+- 前端构建产物：`frontend/dist/`，由后端静态文件服务、Nginx 或对象存储/CDN 托管。
+- 前端开发依赖和构建运行时：Bun；生产环境只需要部署构建后的 `frontend/dist/`。
+- 端口、进程数、日志、反向代理和 HTTPS 证书均属于部署配置，不写入仓库启动脚本。
 
 ## 10. 配置项
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
-| `HOUSING_CLEANER_PORT` | `8765` | 本地 HTTP 服务端口 |
-| `HOUSING_CLEANER_OPEN_BROWSER` | `1` | 是否启动后自动打开浏览器；设为 `0` 可关闭 |
 | `UV_PYTHON` | `.python-version` | 临时覆盖 uv 使用的 Python 解释器 |
-
-示例：
-
-```bash
-HOUSING_CLEANER_PORT=9000 HOUSING_CLEANER_OPEN_BROWSER=0 ./start.sh
-```
 
 ## 11. 目录约定
 
@@ -211,9 +180,6 @@ HOUSING_CLEANER_PORT=9000 HOUSING_CLEANER_OPEN_BROWSER=0 ./start.sh
 │   ├── 北京-单元楼盘字典.xlsx
 │   ├── 售房数据导入模版.xlsx
 │   └── 租房数据导入模版 .xlsx
-├── start.bat                 # Windows 启动脚本
-├── start.sh                  # macOS/Linux 启动脚本
-├── start.command             # macOS Finder 双击入口
 ├── pyproject.toml            # uv 项目配置和依赖声明
 ├── .python-version           # 默认 Python 版本（3.12）
 ├── requirements.txt          # 兼容传统 pip 的依赖清单
@@ -279,8 +245,6 @@ bun run api:gen
 
 ```bash
 uv run python -m py_compile backend/core.py backend/app.py backend/tests/test_smoke.py backend/tests/test_real_data.py
-bash -n start.sh
-bash -n start.command
 ```
 
 前端依赖安装和 TypeScript 检查：
@@ -335,17 +299,9 @@ uv run python backend/tests/test_real_data.py /path/to/source.xlsx
 
 确认四个字典/模板文件已放在项目根目录，且文件名、空格和扩展名完全一致。
 
-### 浏览器没有自动打开
+### 服务没有启动
 
-手动访问 <http://127.0.0.1:8765>。若不希望自动打开，可设置 `HOUSING_CLEANER_OPEN_BROWSER=0`。
-
-### 端口被占用
-
-换一个端口启动，例如：
-
-```bash
-HOUSING_CLEANER_PORT=9000 ./start.sh
-```
+请检查部署平台或进程管理器中的 ASGI 服务配置、日志和健康检查；仓库不再提供本地命令行启动脚本。
 
 ### `.xls` 无法读取
 

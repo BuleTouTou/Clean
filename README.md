@@ -150,6 +150,14 @@ cd ..
 - 前端开发依赖和构建运行时：Bun；生产环境只需要部署构建后的 `frontend/dist/`。
 - 端口、进程数、日志、反向代理和 HTTPS 证书均属于部署配置，不写入仓库启动脚本。
 
+如果部署平台需要填写进程启动命令，请从项目根目录使用 Python 模块方式启动：
+
+```bash
+uv run --project backend python -m uvicorn backend.app:app --host 0.0.0.0 --port 8765
+```
+
+使用 `python -m uvicorn` 可以确保调用的是 `backend` 项目虚拟环境中的 Uvicorn；不要在根目录直接执行 `uv run uvicorn`，因为根目录不再包含 Python 项目配置。
+
 ## 10. 配置项
 
 | 环境变量 | 默认值 | 说明 |

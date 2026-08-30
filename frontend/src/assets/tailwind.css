@@ -1,6 +1,10 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@theme {
+  --color-ink: #17233a;
+  --color-navy: #183f63;
+  --color-accent: #b44236;
+}
 
 :root {
   font-family: "PingFang SC", "Microsoft YaHei", sans-serif;

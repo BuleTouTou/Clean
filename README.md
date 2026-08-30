@@ -37,6 +37,7 @@
 
 - **后端采用 FastAPI**：提供类型化请求校验、自动 OpenAPI 文档和 ASGI 并发模型，适合当前这种本地 API + 文件处理服务。生产启动入口为 `backend.app:app`，由 Uvicorn 承载。
 - **前端采用 TypeScript + Vite**：页面入口和 API 类型定义位于 `frontend/src/`，Vite 将 TypeScript、CSS 和 HTML 构建到 `frontend/dist/`，后端只负责托管构建产物。
+- **样式采用 Tailwind CSS 4**：通过官方 `@tailwindcss/vite` 插件集成，入口文件使用 Tailwind 4 的 `@import "tailwindcss"`，不再使用 Tailwind 3 的 PostCSS 配置或 `@tailwind base/components/utilities` 指令。
 - **前端采用文件路由**：使用 `unplugin-vue-router` 根据 `frontend/src/pages/` 自动生成 Vue Router 路由。页面按文件组织，`App.vue` 只负责全局布局和路由出口。
 - **接口代码使用 Worma 生成**：Worma（`wormajs`）是 Alova 生态当前的 OpenAPI 生成工具。它读取 FastAPI 的 OpenAPI 文档，并生成 Alova 调用函数和 TypeScript 类型；不要再手写一份与后端接口重复的类型定义。
 - **请求状态使用 TanStack Query Vue**：`useQuery` 管理服务状态和历史报告查询，`useMutation` 管理创建任务、上传、审核和导出等有副作用操作；导出成功后通过 query invalidation 刷新历史报告列表。

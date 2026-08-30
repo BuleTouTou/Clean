@@ -119,7 +119,7 @@ const reportColumns = [
       <p class="mt-2 text-slate-500">所有已完成的导出任务都会在这里留下报告。</p>
     </div>
     <div class="mt-6 flex flex-wrap items-center gap-3">
-      <n-input v-model:value="search" clearable placeholder="搜索任务或文件名" />
+      <n-input v-model:value="search" class="w-full sm:w-72" clearable placeholder="搜索任务或文件名" />
       <n-select
         :value="reportKind"
         clearable
@@ -139,7 +139,7 @@ const reportColumns = [
         <span class="text-sm text-slate-500">每页</span>
         <n-select
           :value="reportPageSize"
-          class="w-28"
+          class="w-20"
           :options="[10, 20, 30, 50].map((value) => ({ label: `${value} 条`, value }))"
           @update:value="updatePageSize"
         />

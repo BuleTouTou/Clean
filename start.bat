@@ -1,6 +1,7 @@
 @echo off
 cd /d "%~dp0"
 title Housing Data Cleaner
+set "HOUSING_CLEANER_OPEN_BROWSER=1"
 set "BUNDLED_PY=%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
 if exist "%BUNDLED_PY%" goto bundled
 where py >nul 2>nul

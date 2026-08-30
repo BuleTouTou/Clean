@@ -11,14 +11,16 @@ from urllib.parse import parse_qs, urlparse, unquote
 
 import openpyxl
 
-ROOT = Path(__file__).resolve().parent
+# core.py 位于 backend/ 包内，项目根目录是其父目录。
+ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
 UPLOADS = DATA / "uploads"
 OUTPUTS = ROOT / "outputs"
+RESOURCES = ROOT / "resources"
 RULES_FILE = DATA / "rules.json"
 DOWNLOADS_FILE = DATA / "downloads.json"
-STATIC = ROOT / "static"
-for p in (DATA, UPLOADS, OUTPUTS): p.mkdir(exist_ok=True)
+STATIC = ROOT / "frontend" / "dist"
+for p in (DATA, UPLOADS, OUTPUTS, RESOURCES): p.mkdir(exist_ok=True)
 
 FILES = {
     "estate": "北京楼盘字典.xlsx",
@@ -106,11 +108,11 @@ def parse_layout(value):
     return result
 
 def file_status():
-    return [{"key": k, "name": n, "exists": (ROOT/n).exists(), "size": (ROOT/n).stat().st_size if (ROOT/n).exists() else 0,
-             "mtime": (ROOT/n).stat().st_mtime if (ROOT/n).exists() else None} for k,n in FILES.items()]
+    return [{"key": k, "name": n, "exists": (RESOURCES/n).exists(), "size": (RESOURCES/n).stat().st_size if (RESOURCES/n).exists() else 0,
+             "mtime": (RESOURCES/n).stat().st_mtime if (RESOURCES/n).exists() else None} for k,n in FILES.items()]
 
 def template_info(kind):
-    p = ROOT / FILES[kind]
+    p = RESOURCES / FILES[kind]
     wb = openpyxl.load_workbook(p, read_only=True, data_only=False)
     if "房源" not in wb.sheetnames: raise ValueError(f"模板 {p.name} 缺少‘房源’工作表")
     ws = wb["房源"]
@@ -210,7 +212,7 @@ def mapping_suggestions(headers, target, rows, source_key):
     return out
 
 def load_estates():
-    wb=openpyxl.load_workbook(ROOT/FILES["estate"],read_only=True,data_only=True); ws=wb[wb.sheetnames[0]]
+    wb=openpyxl.load_workbook(RESOURCES/FILES["estate"],read_only=True,data_only=True); ws=wb[wb.sheetnames[0]]
     rows=ws.iter_rows(values_only=True); heads=[str(x or "").strip() for x in next(rows)]; ix={h:i for i,h in enumerate(heads)}
     result=[]
     for r in rows:
@@ -369,7 +371,7 @@ def building_core(v):
     return str(int(numbers[-1])) if numbers else ""
 
 def load_unit_index():
-    wb=openpyxl.load_workbook(ROOT/FILES["unit"],read_only=True,data_only=True); ws=wb[wb.sheetnames[0]]; rows=ws.iter_rows(values_only=True)
+    wb=openpyxl.load_workbook(RESOURCES/FILES["unit"],read_only=True,data_only=True); ws=wb[wb.sheetnames[0]]; rows=ws.iter_rows(values_only=True)
     heads=[str(x or "").strip() for x in next(rows)]; ix={h:i for i,h in enumerate(heads)}; index={}
     for r in rows:
         estate=str(r[ix["楼盘"]] or "").strip(); building=str(r[ix["座栋"]] or "").strip(); unit=str(r[ix["单元"]] or "").strip()
@@ -597,10 +599,3 @@ class Handler(BaseHTTPRequestHandler):
                 b=self.body(); return self.send_json(build_output(get_task(b.get("taskId")),bool(b.get("cleanOnly"))))
             self.send_error(404)
         except Exception as e: self.send_json({"error":str(e)},400)
-
-if __name__=="__main__":
-    port=int(os.environ.get("HOUSING_CLEANER_PORT","8765")); url=f"http://127.0.0.1:{port}"
-    print(f"房源数据清洗工具已启动：{url}")
-    if os.environ.get("HOUSING_CLEANER_OPEN_BROWSER")=="1":
-        threading.Timer(1,lambda:webbrowser.open(url)).start()
-    ThreadingHTTPServer(("127.0.0.1",port),Handler).serve_forever()

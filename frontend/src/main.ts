@@ -1,3 +1,7 @@
+// @ts-nocheck
+import "./styles/style.css";
+import "./styles/purple.css";
+
 const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];let state={kind:null,taskId:null,targets:[],reviews:[],selected:{},currentStep:1,maxStep:1};
 function toast(s){let e=$('#toast');e.textContent=s;e.classList.add('show');setTimeout(()=>e.classList.remove('show'),2600)}
 function busy(show,title='',text=''){let e=$('#busy');if(!e)return;e.classList.toggle('hidden',!show);if(title)$('#busyTitle').textContent=title;if(text)$('#busyText').textContent=text}

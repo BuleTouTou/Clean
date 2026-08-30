@@ -1,5 +1,7 @@
 __pycache__/
 *.py[cod]
+.venv/
+frontend/node_modules/
 data/
 outputs/
 ~$*.xlsx

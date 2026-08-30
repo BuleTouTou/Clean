@@ -2,23 +2,22 @@
 cd /d "%~dp0"
 title Housing Data Cleaner
 set "HOUSING_CLEANER_OPEN_BROWSER=1"
-set "BUNDLED_PY=%USERPROFILE%\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe"
-if exist "%BUNDLED_PY%" goto bundled
-where py >nul 2>nul
-if not errorlevel 1 goto launcher
-where python >nul 2>nul
-if not errorlevel 1 goto system
-echo Python 3.10 or later was not found.
-echo Install Python and enable Add Python to PATH.
-pause
-exit /b 1
-:bundled
-"%BUNDLED_PY%" server.py
-goto done
-:launcher
-py -3 server.py
-goto done
-:system
-python server.py
-:done
+if not defined HOUSING_CLEANER_PORT set "HOUSING_CLEANER_PORT=8765"
+
+where uv >nul 2>nul
+if errorlevel 1 (
+    echo uv was not found.
+    echo Install uv: https://docs.astral.sh/uv/getting-started/installation/
+    pause
+    exit /b 1
+)
+
+if not exist "frontend\dist\index.html" (
+    echo Frontend build output was not found.
+    echo Run: cd frontend ^&^& bun install ^&^& bun run build
+    pause
+    exit /b 1
+)
+
+uv run uvicorn backend.app:app --host 127.0.0.1 --port %HOUSING_CLEANER_PORT%
 if errorlevel 1 pause

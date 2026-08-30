@@ -118,12 +118,12 @@ const reportColumns = [
       <h1 class="mt-2 text-3xl font-bold text-slate-800">清洗任务记录</h1>
       <p class="mt-2 text-slate-500">所有已完成的导出任务都会在这里留下报告。</p>
     </div>
-    <div class="mt-6 flex flex-wrap items-center gap-3">
-      <n-input v-model:value="search" class="w-full sm:w-72" clearable placeholder="搜索任务或文件名" />
+    <div class="mt-6 flex flex-nowrap items-center gap-3 overflow-x-auto">
+      <n-input v-model:value="search" class="!w-72 shrink-0" clearable placeholder="搜索任务或文件名" />
       <n-select
         :value="reportKind"
         clearable
-        class="w-32"
+        class="!w-28 shrink-0"
         placeholder="全部类型"
         :options="[{ label: '出售', value: 'sale' }, { label: '出租', value: 'rent' }]"
         @update:value="updateReportKind"
@@ -139,8 +139,8 @@ const reportColumns = [
         <span class="text-sm text-slate-500">每页</span>
         <n-select
           :value="reportPageSize"
-          class="w-20"
-          :options="[10, 20, 30, 50].map((value) => ({ label: `${value} 条`, value }))"
+          class="!w-16 shrink-0"
+          :options="[10, 20, 30, 50].map((value) => ({ label: `${value}条`, value }))"
           @update:value="updatePageSize"
         />
         <n-pagination v-model:page="reportPage" :page-size="reportPageSize" :item-count="reportQuery.data.value?.total ?? 0" />

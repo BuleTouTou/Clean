@@ -11,6 +11,7 @@ from urllib.parse import parse_qs, urlparse, unquote
 
 import openpyxl
 from .db import init_db, save_report
+from .storage import get_storage
 
 # core.py 位于 backend/ 包内，项目根目录是其父目录。
 ROOT = Path(__file__).resolve().parent.parent
@@ -573,9 +574,50 @@ def build_output(task, clean_only=False):
         with (outdir/name).open("w",encoding="utf-8-sig",newline="") as f:
             if records:
                 w=csv.DictWriter(f,fieldnames=list(records[0])); w.writeheader(); w.writerows(records)
-    download_id=register_download(outpath)
-    task["last_export"]={"file":str(outpath.relative_to(ROOT)),"downloadId":download_id,"report":report,"audit":len(audit),"exceptions":exceptions}
-    save_report(DB_FILE, task["id"], kind, report, str(outpath.relative_to(ROOT)), len(audit))
+    storage = get_storage()
+    artifacts = {}
+    output_url = None
+    output_object_key = None
+    if storage is not None:
+        if task.get("source_artifact"):
+            artifacts["原始上传文件"] = task["source_artifact"]
+        artifact_paths = [outpath, outdir / "清洗报告.json", outdir / "审计日志.csv", outdir / "异常清单.csv"]
+        for artifact_path in artifact_paths:
+            if artifact_path.exists():
+                object_key = f"housing-cleaner/{task['id']}/{artifact_path.name}"
+                artifacts[artifact_path.name] = storage.upload_file(artifact_path, object_key)
+        report["OSS文件"] = artifacts
+        (outdir / "清洗报告.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), "utf-8")
+        report_key = f"housing-cleaner/{task['id']}/清洗报告.json"
+        artifacts["清洗报告.json"] = storage.upload_file(outdir / "清洗报告.json", report_key)
+        output_info = artifacts[outpath.name]
+        output_url = str(output_info["url"])
+        output_object_key = str(output_info["objectKey"])
+        shutil.rmtree(outdir)
+        source_path = task.get("source_path")
+        if source_path and Path(source_path).exists():
+            Path(source_path).unlink()
+        if task.get("path") and Path(task["path"]) != Path(source_path or "") and Path(task["path"]).exists():
+            Path(task["path"]).unlink()
+        download_id = None
+        output_file = None
+    else:
+        download_id = register_download(outpath)
+        output_file = str(outpath.relative_to(ROOT))
+    task["last_export"]={"file":output_file,"downloadId":download_id,"ossUrl":output_url,"ossObjectKey":output_object_key,"artifacts":artifacts,"report":report,"audit":len(audit),"exceptions":exceptions}
+    source_info = task.get("source_artifact") or {}
+    save_report(
+        DB_FILE,
+        task["id"],
+        kind,
+        report,
+        output_file,
+        len(audit),
+        str(source_info.get("url")) if source_info.get("url") else None,
+        str(source_info.get("objectKey")) if source_info.get("objectKey") else None,
+        output_url,
+        output_object_key,
+    )
     return task["last_export"]
 
 class Handler(BaseHTTPRequestHandler):

@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 # 清洗算法集中在包内 core 模块。
 from . import core as legacy
 from .db import get_report, list_reports
+from .storage import get_storage
 
 
 class TaskRequest(BaseModel):
@@ -113,10 +114,14 @@ async def upload(request: Request) -> dict[str, Any]:
         ext = Path(name).suffix.lower()
         if ext not in (".csv", ".xls", ".xlsx"):
             raise ValueError("仅支持 CSV、XLS、XLSX")
-        path = legacy.UPLOADS / f"{task_id}{ext}"
-        path.write_bytes(await request.body())
-        path, sheets = legacy.inspect_upload(path)
-        task.update({"path": path, "original_name": name, "sheets": sheets})
+        original_path = legacy.UPLOADS / f"{task_id}{ext}"
+        original_path.write_bytes(await request.body())
+        path, sheets = legacy.inspect_upload(original_path)
+        source_artifact = None
+        storage = get_storage()
+        if storage is not None:
+            source_artifact = storage.upload_file(original_path, f"housing-cleaner/{task_id}/source/{name}")
+        task.update({"path": path, "source_path": original_path, "original_name": name, "sheets": sheets, "source_artifact": source_artifact})
         return {
             "sheets": sheets,
             "received": {"name": name, "size": path.stat().st_size, "sizeMB": round(path.stat().st_size / 1024 / 1024, 1)},

@@ -29,22 +29,46 @@ def init_db(path: Path) -> None:
                 output_rows INTEGER NOT NULL DEFAULT 0,
                 blocking_count INTEGER NOT NULL DEFAULT 0,
                 audit_count INTEGER NOT NULL DEFAULT 0,
+                source_url TEXT,
+                source_object_key TEXT,
                 output_file TEXT,
+                output_url TEXT,
+                output_object_key TEXT,
                 report_json TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
         )
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(task_reports)")}
+        for name, definition in {
+            "source_url": "TEXT",
+            "source_object_key": "TEXT",
+            "output_url": "TEXT",
+            "output_object_key": "TEXT",
+        }.items():
+            if name not in columns:
+                connection.execute(f"ALTER TABLE task_reports ADD COLUMN {name} {definition}")
 
 
-def save_report(path: Path, task_id: str, kind: str, report: dict[str, Any], output_file: str | None, audit_count: int) -> int:
+def save_report(
+    path: Path,
+    task_id: str,
+    kind: str,
+    report: dict[str, Any],
+    output_file: str | None,
+    audit_count: int,
+    source_url: str | None = None,
+    source_object_key: str | None = None,
+    output_url: str | None = None,
+    output_object_key: str | None = None,
+) -> int:
     with connect(path) as connection:
         cursor = connection.execute(
             """
             INSERT INTO task_reports (
                 task_id, kind, original_name, entrust_date, started_at, completed_at,
-                input_rows, output_rows, blocking_count, audit_count, output_file, report_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                input_rows, output_rows, blocking_count, audit_count, source_url, source_object_key, output_file, output_url, output_object_key, report_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(task_id) DO UPDATE SET
                 kind=excluded.kind,
                 original_name=excluded.original_name,
@@ -55,7 +79,11 @@ def save_report(path: Path, task_id: str, kind: str, report: dict[str, Any], out
                 output_rows=excluded.output_rows,
                 blocking_count=excluded.blocking_count,
                 audit_count=excluded.audit_count,
+                source_url=excluded.source_url,
+                source_object_key=excluded.source_object_key,
                 output_file=excluded.output_file,
+                output_url=excluded.output_url,
+                output_object_key=excluded.output_object_key,
                 report_json=excluded.report_json
             RETURNING id
             """,
@@ -70,7 +98,11 @@ def save_report(path: Path, task_id: str, kind: str, report: dict[str, Any], out
                 int(report.get("最终输出记录数", 0)),
                 int(report.get("阻断异常数量", 0)),
                 int(audit_count),
+                source_url,
+                source_object_key,
                 output_file,
+                output_url,
+                output_object_key,
                 json.dumps(report, ensure_ascii=False),
             ),
         )
@@ -89,7 +121,7 @@ def list_reports(path: Path, page: int = 1, page_size: int = 20, kind: str | Non
     with connect(path) as connection:
         total = int(connection.execute(f"SELECT COUNT(*) FROM task_reports{where}", params).fetchone()[0])
         rows = connection.execute(
-            f"SELECT id, task_id, kind, original_name, entrust_date, started_at, completed_at, input_rows, output_rows, blocking_count, audit_count, output_file, report_json FROM task_reports{where} ORDER BY completed_at DESC, id DESC LIMIT ? OFFSET ?",
+            f"SELECT id, task_id, kind, original_name, entrust_date, started_at, completed_at, input_rows, output_rows, blocking_count, audit_count, source_url, source_object_key, output_file, output_url, output_object_key, report_json FROM task_reports{where} ORDER BY completed_at DESC, id DESC LIMIT ? OFFSET ?",
             [*params, page_size, (page - 1) * page_size],
         ).fetchall()
     items = []

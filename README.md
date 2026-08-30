@@ -164,6 +164,14 @@ uv run --project backend python -m uvicorn backend.app:app --host 0.0.0.0 --port
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
 | `UV_PYTHON` | `backend/.python-version` | 临时覆盖 uv 使用的 Python 解释器 |
+| `MINIO_ENABLED` | `false` | 是否启用 MinIO 文件存储 |
+| `MINIO_ENDPOINT` | 无 | MinIO 服务地址，例如 `http://localhost:9000` |
+| `MINIO_ACCESS_KEY` / `MINIO_USERNAME` | 无 | MinIO Access Key；兼容旧变量名 `MINIO_USERNAME` |
+| `MINIO_SECRET_KEY` / `MINIO_PASSWORD` | 无 | MinIO Secret Key；兼容旧变量名 `MINIO_PASSWORD` |
+| `MINIO_BUCKET` | 无 | 存放清洗文件的 Bucket，必须由部署环境提供 |
+| `MINIO_PUBLIC_ENDPOINT` | 同 `MINIO_ENDPOINT` | 数据库中 OSS URL 使用的可访问地址 |
+
+开发环境可以复制根目录的 `.env.example` 为 `.env`，再填写 MinIO 凭据。`.env` 已加入 Git 忽略规则，正式环境应通过部署平台的 Secret 注入配置，不要把生产地址和密钥提交到仓库。当前项目约定使用 Bucket `clean`，MinIO 启用后会上传原始文件、最终 Excel、清洗报告、审计日志和异常清单；数据库保存输入和输出文件的 OSS URL、对象键。
 
 ## 11. 目录约定
 
@@ -202,15 +210,15 @@ uv run --project backend python -m uvicorn backend.app:app --host 0.0.0.0 --port
 │   ├── 北京-单元楼盘字典.xlsx
 │   ├── 售房数据导入模版.xlsx
 │   └── 租房数据导入模版 .xlsx
-├── data/                     # 上传文件、规则和下载注册信息（Git 忽略）
-└── outputs/                  # 每个任务的导出结果（Git 忽略）
+├── data/                     # SQLite、规则和本地开发兼容数据（Git 忽略）
+└── outputs/                  # MinIO 未启用时的本地开发回退目录（Git 忽略）
 ```
 
 首次执行 `uv sync --project backend` 后会使用 `backend/uv.lock`。依赖版本稳定后，建议将该锁文件一并提交，以保证不同机器使用相同版本的后端依赖。
 
 ## 12. 输出文件规范
 
-每次导出会在 `outputs/<任务 ID>/` 下生成：
+MinIO 启用时，每次任务的文件会上传到 `clean/housing-cleaner/<任务 ID>/`；MinIO 未启用时才会在本地 `outputs/<任务 ID>/` 下生成回退文件：
 
 - `售房清洗导入_时间戳.xlsx` 或 `租房清洗导入_时间戳.xlsx`：最终导入文件。
 - `清洗报告.json`：原始记录数、输出记录数、异常数量、规则版本以及本批次清洗规则快照等汇总信息。

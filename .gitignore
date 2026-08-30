@@ -5,6 +5,8 @@ __pycache__/
 backend/.venv/
 frontend/node_modules/
 frontend/.worma-cache/
+.env
+.env.local
 data/
 outputs/
 backend/openapi.json

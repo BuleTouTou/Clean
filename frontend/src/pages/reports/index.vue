@@ -40,6 +40,7 @@ const filteredReports = computed(() => {
 });
 
 function downloadUrl(row: ReportItem) {
+  if (row.output_url) return row.output_url;
   return row.output_file ? `/download/${row.output_file.split(/[\\/]/).map(encodeURIComponent).join("/")}` : "";
 }
 

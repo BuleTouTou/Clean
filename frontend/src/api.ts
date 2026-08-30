@@ -3,7 +3,7 @@ import * as generated from "./generated/services/general";
 export type BatchKind = "sale" | "rent";
 export interface SheetInfo { name: string; hidden: boolean; rows: number; cols: number; headerRow: number; preview: string[][]; }
 export interface MappingSuggestion { source: string; target: string; confidence: number; reason: string; samples: string[]; }
-export interface ReportItem { id: number; task_id: string; kind: BatchKind; original_name: string; entrust_date: string; started_at: string; completed_at: string; input_rows: number; output_rows: number; blocking_count: number; audit_count: number; output_file: string | null; report: Record<string, unknown>; }
+export interface ReportItem { id: number; task_id: string; kind: BatchKind; original_name: string; entrust_date: string; started_at: string; completed_at: string; input_rows: number; output_rows: number; blocking_count: number; audit_count: number; source_url: string | null; source_object_key: string | null; output_file: string | null; output_url: string | null; output_object_key: string | null; report: Record<string, unknown>; }
 export interface ReportsResponse { items: ReportItem[]; total: number; page: number; pageSize: number; }
 
 function send<T>(method: PromiseLike<unknown>): Promise<T> {

@@ -264,7 +264,7 @@ async function exportFile(cleanOnly: boolean) {
       <n-space>
         <n-button type="primary" @click="exportFile(false)">导出全部数据</n-button>
         <n-button secondary @click="exportFile(true)">仅导出无阻断异常</n-button>
-        <n-button v-if="exportResult?.downloadId" tag="a" :href="`/download/${exportResult.downloadId}`" target="_blank" tertiary>下载文件</n-button>
+        <n-button v-if="exportResult?.ossUrl || exportResult?.downloadId" tag="a" :href="exportResult.ossUrl || '/download/' + exportResult.downloadId" target="_blank" tertiary>下载文件</n-button>
       </n-space>
       <div class="mt-6"><n-button text @click="resetTask">开始新任务</n-button></div>
     </n-card>

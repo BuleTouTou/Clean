@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // @ts-nocheck
-import { computed, h, onMounted, ref } from "vue";
-import { useQuery } from "@tanstack/vue-query";
+import { computed, h, ref } from "vue";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
 import {
   NAlert, NButton, NCard, NDataTable, NDatePicker, NEmpty, NInput, NLayout, NLayoutContent,
   NLayoutSider, NMenu, NPagination, NRadio, NRadioGroup, NResult, NSelect, NSpace, NSpin,
@@ -30,12 +30,29 @@ const exportResult = ref<any>(null);
 const search = ref("");
 const reportPage = ref(1);
 const reportKind = ref<BatchKind | undefined>();
+const queryClient = useQueryClient();
 
 const reportQuery = useQuery({
   queryKey: computed(() => ["reports", reportPage.value, reportKind.value, search.value]),
   queryFn: () => api.reports(reportPage.value, 20, reportKind.value),
   enabled: computed(() => menu.value === "reports"),
 });
+
+const statusQuery = useQuery({
+  queryKey: ["status"],
+  queryFn: () => api.status(),
+  staleTime: 30_000,
+});
+
+// 所有会改变任务状态的请求统一通过 TanStack Query mutation 管理，
+// 这样可以获得 pending/error 状态，并在导出成功后刷新历史报告缓存。
+const createTaskMutation = useMutation({ mutationFn: (value: BatchKind) => api.createTask(value) });
+const uploadMutation = useMutation({ mutationFn: ({ id, source }: { id: string; source: File }) => api.upload(id, source) });
+const selectSheetMutation = useMutation({ mutationFn: ({ id, sheet }: { id: string; sheet: SheetInfo }) => api.selectSheet(id, sheet) });
+const mappingMutation = useMutation({ mutationFn: ({ id, value }: { id: string; value: Record<string, string> }) => api.mapping(id, value) });
+const buildingReviewMutation = useMutation({ mutationFn: ({ id, value }: { id: string; value: Record<string, string> }) => api.buildingReview(id, value) });
+const buildingConfirmMutation = useMutation({ mutationFn: ({ id, value, date }: { id: string; value: Record<string, string>; date: string }) => api.buildingConfirm(id, value, date) });
+const exportMutation = useMutation({ mutationFn: ({ id, cleanOnly }: { id: string; cleanOnly: boolean }) => api.export(id, cleanOnly) });
 
 const filteredReports = computed(() => {
   const items = reportQuery.data.value?.items ?? [];
@@ -66,37 +83,36 @@ function handleFileChange(event: Event) {
 async function createTask() {
   if (!kind.value) return;
   busy.value = true;
-  try { const result = await api.createTask(kind.value); taskId.value = result.taskId; step.value = 2; message.success("清洗任务已创建"); } catch (error: any) { message.error(error.message); } finally { busy.value = false; }
+  try { const result = await createTaskMutation.mutateAsync(kind.value); taskId.value = result.taskId; step.value = 2; message.success("清洗任务已创建"); } catch (error: any) { message.error(error.message); } finally { busy.value = false; }
 }
 async function upload() {
   if (!file.value || !taskId.value) return;
   busy.value = true;
-  try { const result = await api.upload(taskId.value, file.value); sheets.value = result.sheets; message.success("文件识别完成"); } catch (error: any) { message.error(error.message); } finally { busy.value = false; }
+  try { const result = await uploadMutation.mutateAsync({ id: taskId.value, source: file.value }); sheets.value = result.sheets; message.success("文件识别完成"); } catch (error: any) { message.error(error.message); } finally { busy.value = false; }
 }
 async function selectSheet(sheet: SheetInfo) {
   selectedSheet.value = sheet; busy.value = true;
-  try { const result = await api.selectSheet(taskId.value, sheet); targets.value = result.targets; suggestions.value = result.suggestions; mapping.value = Object.fromEntries(result.suggestions.map((item: any) => [item.source, item.target || "__ignore__"])); step.value = 3; } catch (error: any) { message.error(error.message); } finally { busy.value = false; }
+  try { const result = await selectSheetMutation.mutateAsync({ id: taskId.value, sheet }); targets.value = result.targets; suggestions.value = result.suggestions; mapping.value = Object.fromEntries(result.suggestions.map((item: any) => [item.source, item.target || "__ignore__"])); step.value = 3; } catch (error: any) { message.error(error.message); } finally { busy.value = false; }
 }
 async function confirmMapping() {
   busy.value = true;
-  try { const result = await api.mapping(taskId.value, mapping.value); estateReviews.value = result.reviews; estateSelected.value = {}; step.value = 4; message.success(`已自动匹配 ${result.autoCount} 个小区`); } catch (error: any) { message.error(error.message); } finally { busy.value = false; }
+  try { const result = await mappingMutation.mutateAsync({ id: taskId.value, value: mapping.value }); estateReviews.value = result.reviews; estateSelected.value = {}; step.value = 4; message.success(`已自动匹配 ${result.autoCount} 个小区`); } catch (error: any) { message.error(error.message); } finally { busy.value = false; }
 }
 async function confirmEstate() {
   busy.value = true;
-  try { const result = await api.buildingReview(taskId.value, estateSelected.value); buildingReviews.value = result.reviews; buildingSelected.value = {}; step.value = 5; } catch (error: any) { message.error(error.message); } finally { busy.value = false; }
+  try { const result = await buildingReviewMutation.mutateAsync({ id: taskId.value, value: estateSelected.value }); buildingReviews.value = result.reviews; buildingSelected.value = {}; step.value = 5; } catch (error: any) { message.error(error.message); } finally { busy.value = false; }
 }
 async function confirmBuilding() {
   busy.value = true;
-  try { await api.buildingConfirm(taskId.value, buildingSelected.value, new Date(entrustDate.value).toISOString().slice(0, 10)); step.value = 6; } catch (error: any) { message.error(error.message); } finally { busy.value = false; }
+  try { await buildingConfirmMutation.mutateAsync({ id: taskId.value, value: buildingSelected.value, date: new Date(entrustDate.value).toISOString().slice(0, 10) }); step.value = 6; } catch (error: any) { message.error(error.message); } finally { busy.value = false; }
 }
 async function exportFile(cleanOnly: boolean) {
   busy.value = true;
-  try { exportResult.value = await api.export(taskId.value, cleanOnly); message.success("文件已生成"); if (menu.value === "reports") reportQuery.refetch(); } catch (error: any) { message.error(error.message); } finally { busy.value = false; }
+  try { exportResult.value = await exportMutation.mutateAsync({ id: taskId.value, cleanOnly }); message.success("文件已生成"); await queryClient.invalidateQueries({ queryKey: ["reports"] }); } catch (error: any) { message.error(error.message); } finally { busy.value = false; }
 }
 function downloadUrl(row: ReportItem) { return row.output_file ? `/download/${row.output_file.split(/[\\/]/).map(encodeURIComponent).join("/")}` : ""; }
 function openReport(row: ReportItem) { if (row.output_file) window.open(downloadUrl(row), "_blank"); else message.info("该报告没有可下载的文件"); }
 function formatDate(value: number) { return new Date(value).toISOString().slice(0, 10); }
-onMounted(() => { api.status().catch(() => undefined); });
 </script>
 
 <template>

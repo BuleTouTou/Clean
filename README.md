@@ -171,7 +171,7 @@ uv run --project backend python -m uvicorn backend.app:app --host 0.0.0.0 --port
 | `MINIO_BUCKET` | 无 | 存放清洗文件的 Bucket，必须由部署环境提供 |
 | `MINIO_PUBLIC_ENDPOINT` | 同 `MINIO_ENDPOINT` | 数据库中 OSS URL 使用的可访问地址 |
 
-开发环境可以复制根目录的 `.env.example` 为 `.env`，再填写 MinIO 凭据。`.env` 已加入 Git 忽略规则，正式环境应通过部署平台的 Secret 注入配置，不要把生产地址和密钥提交到仓库。当前项目约定使用 Bucket `clean`，MinIO 启用后会上传原始文件、最终 Excel、清洗报告、审计日志和异常清单；数据库保存输入和输出文件的 OSS URL、对象键。
+开发环境可以复制根目录的 `.env.example` 为 `.env`，再填写 MinIO 凭据。`.env` 已加入 Git 忽略规则，正式环境应通过部署平台的 Secret 注入配置，不要把生产地址和密钥提交到仓库。当前项目约定使用 Bucket `clean`，MinIO 启用后会上传原始文件、最终 Excel、审计日志和异常清单；清洗报告 JSON 直接保存到数据库，数据库保存输入和输出文件的 OSS URL、对象键。
 
 ## 11. 目录约定
 
@@ -221,7 +221,7 @@ uv run --project backend python -m uvicorn backend.app:app --host 0.0.0.0 --port
 MinIO 启用时，每次任务的文件会上传到 `clean/housing-cleaner/<任务 ID>/`；MinIO 未启用时才会在本地 `outputs/<任务 ID>/` 下生成回退文件：
 
 - `售房清洗导入_时间戳.xlsx` 或 `租房清洗导入_时间戳.xlsx`：最终导入文件。
-- `清洗报告.json`：原始记录数、输出记录数、异常数量、规则版本以及本批次清洗规则快照等汇总信息。
+- `清洗报告.json`：MinIO 未启用的本地回退模式下生成；生产模式下报告内容直接保存到 SQLite 的 JSON 文本字段，不再上传 OSS。
 - `审计日志.csv`：字段级修改记录，包括原始值、最终值、规则、字典来源和置信度。
 - `异常清单.csv`：楼盘、栋座、单元或价格缺失等阻断异常。
 

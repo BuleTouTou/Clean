@@ -569,7 +569,6 @@ def build_output(task, clean_only=False):
     outdir=OUTPUTS/task["id"]; outdir.mkdir(parents=True,exist_ok=True)
     outpath=outdir/f"{prefix}清洗导入_{stamp}.xlsx"; wb.save(outpath)
     report={"原始文件名":task["original_name"],"类型":"出售" if kind=="sale" else "出租","任务开始时间":task["started"],"委托日期":task["entrust_date"],"原始记录数":len(task["rows"]),"最终输出记录数":len(output),"阻断异常数量":len(exceptions),"规则版本":RULE_VERSION,"完成时间":datetime.now().isoformat(timespec="seconds"),"清洗规则":rule_snapshot(task)}
-    (outdir/"清洗报告.json").write_text(json.dumps(report,ensure_ascii=False,indent=2),"utf-8")
     for name,records in (("审计日志.csv",audit),("异常清单.csv",exceptions)):
         with (outdir/name).open("w",encoding="utf-8-sig",newline="") as f:
             if records:
@@ -581,15 +580,12 @@ def build_output(task, clean_only=False):
     if storage is not None:
         if task.get("source_artifact"):
             artifacts["原始上传文件"] = task["source_artifact"]
-        artifact_paths = [outpath, outdir / "清洗报告.json", outdir / "审计日志.csv", outdir / "异常清单.csv"]
+        artifact_paths = [outpath, outdir / "审计日志.csv", outdir / "异常清单.csv"]
         for artifact_path in artifact_paths:
             if artifact_path.exists():
                 object_key = f"housing-cleaner/{task['id']}/{artifact_path.name}"
                 artifacts[artifact_path.name] = storage.upload_file(artifact_path, object_key)
         report["OSS文件"] = artifacts
-        (outdir / "清洗报告.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), "utf-8")
-        report_key = f"housing-cleaner/{task['id']}/清洗报告.json"
-        artifacts["清洗报告.json"] = storage.upload_file(outdir / "清洗报告.json", report_key)
         output_info = artifacts[outpath.name]
         output_url = str(output_info["url"])
         output_object_key = str(output_info["objectKey"])
@@ -602,6 +598,7 @@ def build_output(task, clean_only=False):
         download_id = None
         output_file = None
     else:
+        (outdir / "清洗报告.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), "utf-8")
         download_id = register_download(outpath)
         output_file = str(outpath.relative_to(ROOT))
     task["last_export"]={"file":output_file,"downloadId":download_id,"ossUrl":output_url,"ossObjectKey":output_object_key,"artifacts":artifacts,"report":report,"audit":len(audit),"exceptions":exceptions}

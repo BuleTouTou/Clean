@@ -139,8 +139,8 @@ const reportColumns = [
         <span class="text-sm text-slate-500">每页</span>
         <n-select
           :value="reportPageSize"
-          class="!w-16 shrink-0"
-          :options="[10, 20, 30, 50].map((value) => ({ label: `${value}条`, value }))"
+          class="!w-20 shrink-0"
+          :options="[10, 20, 30, 50].map((value) => ({ label: `${value}条/页`, value }))"
           @update:value="updatePageSize"
         />
         <n-pagination v-model:page="reportPage" :page-size="reportPageSize" :item-count="reportQuery.data.value?.total ?? 0" />

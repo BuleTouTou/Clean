@@ -58,6 +58,9 @@ def main():
         assert str(output_sheet["AP2"].value) == "260616013" and output_sheet["AP2"].number_format == "@"
         assert exported["report"]["阻断异常数量"] >= 1
         assert exported["report"]["清洗规则"]["字段映射"] == mapping
+        assert exported["report"]["任务开始时间"].endswith("Z")
+        assert exported["report"]["完成时间"].endswith("Z")
+        assert all(item["操作时间"].endswith("Z") for item in exported["report"]["审计记录"])
         assert any(output_sheet.cell(row, output_sheet.max_column).value for row in range(2, output_sheet.max_row + 1))
         print(json.dumps({"ok": True, "output": str(output_path), "review": len(review["reviews"]), "report": exported["report"]}, ensure_ascii=False))
     finally:

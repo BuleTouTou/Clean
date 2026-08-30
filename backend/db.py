@@ -2,8 +2,62 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+
+
+LEGACY_BEIJING_TIMEZONE = timezone(timedelta(hours=8))
+UTC_TIMEZONE = timezone.utc
+
+
+def _normalize_utc_iso(value: str, naive_timezone: timezone = LEGACY_BEIJING_TIMEZONE) -> str:
+    """Normalize an ISO timestamp to a UTC value with a trailing ``Z``.
+
+    Timestamps written by older versions had no timezone and represented Beijing
+    local time, so those values are interpreted as Asia/Shanghai during migration.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return raw
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return raw
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=naive_timezone)
+    return parsed.astimezone(UTC_TIMEZONE).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _migrate_report_timestamps(raw_report: str) -> str:
+    try:
+        report = json.loads(raw_report)
+    except (TypeError, json.JSONDecodeError):
+        return raw_report
+
+    for key in ("任务开始时间", "完成时间"):
+        if key in report:
+            report[key] = _normalize_utc_iso(report[key])
+    for entry in report.get("审计记录") or []:
+        if isinstance(entry, dict) and "操作时间" in entry:
+            entry["操作时间"] = _normalize_utc_iso(entry["操作时间"])
+    return json.dumps(report, ensure_ascii=False)
+
+
+def _migrate_legacy_timestamps(connection: sqlite3.Connection) -> None:
+    rows = connection.execute(
+        "SELECT id, started_at, completed_at, created_at, report_json FROM task_reports"
+    ).fetchall()
+    for row in rows:
+        started_at = _normalize_utc_iso(row[1])
+        completed_at = _normalize_utc_iso(row[2])
+        created_at = _normalize_utc_iso(row[3], UTC_TIMEZONE)
+        report_json = _migrate_report_timestamps(row[4])
+        if (started_at, completed_at, created_at, report_json) != (row[1], row[2], row[3], row[4]):
+            connection.execute(
+                "UPDATE task_reports SET started_at = ?, completed_at = ?, created_at = ?, report_json = ? WHERE id = ?",
+                (started_at, completed_at, created_at, report_json, row[0]),
+            )
 
 
 def connect(path: Path) -> sqlite3.Connection:
@@ -35,7 +89,7 @@ def init_db(path: Path) -> None:
                 output_url TEXT,
                 output_object_key TEXT,
                 report_json TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
             )
             """
         )
@@ -48,6 +102,7 @@ def init_db(path: Path) -> None:
         }.items():
             if name not in columns:
                 connection.execute(f"ALTER TABLE task_reports ADD COLUMN {name} {definition}")
+        _migrate_legacy_timestamps(connection)
 
 
 def save_report(
@@ -62,13 +117,17 @@ def save_report(
     output_url: str | None = None,
     output_object_key: str | None = None,
 ) -> int:
+    report_json = _migrate_report_timestamps(json.dumps(report, ensure_ascii=False))
+    started_at = _normalize_utc_iso(report.get("任务开始时间", ""))
+    completed_at = _normalize_utc_iso(report.get("完成时间", ""))
+    created_at = datetime.now(UTC_TIMEZONE).isoformat(timespec="seconds").replace("+00:00", "Z")
     with connect(path) as connection:
         cursor = connection.execute(
             """
             INSERT INTO task_reports (
                 task_id, kind, original_name, entrust_date, started_at, completed_at,
-                input_rows, output_rows, blocking_count, audit_count, source_url, source_object_key, output_file, output_url, output_object_key, report_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                input_rows, output_rows, blocking_count, audit_count, source_url, source_object_key, output_file, output_url, output_object_key, report_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(task_id) DO UPDATE SET
                 kind=excluded.kind,
                 original_name=excluded.original_name,
@@ -92,8 +151,8 @@ def save_report(
                 kind,
                 str(report.get("原始文件名", "")),
                 report.get("委托日期"),
-                str(report.get("任务开始时间", "")),
-                str(report.get("完成时间", "")),
+                started_at,
+                completed_at,
                 int(report.get("原始记录数", 0)),
                 int(report.get("最终输出记录数", 0)),
                 int(report.get("阻断异常数量", 0)),
@@ -103,7 +162,8 @@ def save_report(
                 output_file,
                 output_url,
                 output_object_key,
-                json.dumps(report, ensure_ascii=False),
+                report_json,
+                created_at,
             ),
         )
         return int(cursor.fetchone()[0])

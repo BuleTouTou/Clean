@@ -42,7 +42,7 @@
 - **前端采用文件路由**：使用 `unplugin-vue-router` 根据 `frontend/src/pages/` 自动生成 Vue Router 路由。页面按文件组织，`App.vue` 只负责全局布局和路由出口。
 - **接口代码使用 Worma 生成**：Worma（`wormajs`）是 Alova 生态当前的 OpenAPI 生成工具。它读取 FastAPI 的 OpenAPI 文档，并生成 Alova 调用函数和 TypeScript 类型；不要再手写一份与后端接口重复的类型定义。
 - **请求状态使用 TanStack Query Vue**：`useQuery` 管理服务状态和历史报告查询，`useMutation` 管理创建任务、上传、审核和导出等有副作用操作；导出成功后通过 query invalidation 刷新历史报告列表。
-- **代码边界**：清洗算法集中在 `backend/core.py`，新功能应优先放入 `backend/` 包；前端源码和构建产物均放在 `frontend/`，不要直接编辑 `frontend/dist/`。
+- **代码边界**：清洗算法集中在 `backend/core.py`，新功能应优先放入 `backend/` 包；前端源码位于 `frontend/`，`frontend/dist/` 仅是构建时生成的临时产物，不提交到 Git，也不要直接编辑。
 
 ## 5. 后端包结构
 
@@ -147,8 +147,8 @@ cd ..
 本项目面向上线部署，不再提供 `start.bat`、`start.sh` 或 `start.command` 等命令行启动脚本。服务启动、停止、重启和健康检查统一交给部署平台或进程管理器（例如 Docker、systemd、Supervisor、Kubernetes 或云平台托管服务）。
 
 - 后端 ASGI 应用入口：`backend.app:app`，由部署平台配置 Uvicorn/Gunicorn 等 ASGI Server 承载。
-- 前端构建产物：`frontend/dist/`，由后端静态文件服务、Nginx 或对象存储/CDN 托管。
-- 前端开发依赖和构建运行时：Bun；生产环境只需要部署构建后的 `frontend/dist/`。
+- 前端构建产物：部署前由 `bun run build` 生成 `frontend/dist/`，再由后端静态文件服务、Nginx 或对象存储/CDN 托管；该目录不提交到 Git。
+- 前端开发依赖和构建运行时：Bun；生产部署需要在构建阶段生成并发布 `frontend/dist/`。
 - 端口、进程数、日志、反向代理和 HTTPS 证书均属于部署配置，不写入仓库启动脚本。
 
 如果部署平台需要填写进程启动命令，请从项目根目录使用 Python 模块方式启动：
@@ -172,6 +172,8 @@ uv run --project backend python -m uvicorn backend.app:app --host 0.0.0.0 --port
 | `MINIO_PUBLIC_ENDPOINT` | 同 `MINIO_ENDPOINT` | 数据库中 OSS URL 使用的可访问地址 |
 
 开发环境可以复制根目录的 `.env.example` 为 `.env`，再填写 MinIO 凭据。`.env` 已加入 Git 忽略规则，正式环境应通过部署平台的 Secret 注入配置，不要把生产地址和密钥提交到仓库。当前项目约定使用 Bucket `clean`，MinIO 启用后只上传原始文件和最终 Excel；清洗报告 JSON 直接保存到数据库，其中包含异常详情、审计记录和清洗规则快照，数据库保存输入和输出文件的 OSS URL、对象键。
+
+数据库中的任务开始时间、完成时间和审计操作时间统一保存为带 `Z` 后缀的 UTC ISO 8601 字符串（例如 `2026-08-30T16:18:30Z`）。前端展示时通过浏览器 `Intl.DateTimeFormat` 转换为北京时间（`Asia/Shanghai`），不依赖访问者电脑的本地时区。
 
 ## 11. 目录约定
 
@@ -204,7 +206,6 @@ uv run --project backend python -m uvicorn backend.app:app --host 0.0.0.0 --port
 │   ├── src/main.ts           # TypeScript 入口
 │   ├── src/assets/            # 全局资源和 Tailwind CSS 入口
 │   │   └── tailwind.css
-├── frontend/dist/            # Vite 构建产物（不要直接编辑）
 ├── resources/                # 楼盘字典和导入模板（业务资源目录）
 │   ├── 北京楼盘字典.xlsx
 │   ├── 北京-单元楼盘字典.xlsx

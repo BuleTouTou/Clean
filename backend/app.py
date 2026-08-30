@@ -96,7 +96,7 @@ def create_task(body: TaskRequest) -> dict[str, Any]:
         legacy.TASKS[task_id] = {
             "id": task_id,
             "kind": body.kind,
-            "started": legacy.datetime.now().isoformat(timespec="seconds"),
+            "started": legacy.utc_now_iso(),
             "entrust_date": str(date.today()),
             "template_signature": info["signature"],
         }
@@ -206,4 +206,5 @@ def download(token: str) -> FileResponse | RedirectResponse:
     return FileResponse(path, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename=path.name)
 
 
-app.mount("/", StaticFiles(directory=legacy.STATIC, html=True), name="static")
+if legacy.STATIC.exists():
+    app.mount("/", StaticFiles(directory=legacy.STATIC, html=True), name="static")

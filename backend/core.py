@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import csv, hashlib, io, json, os, re, shutil, subprocess, threading, time, unicodedata, uuid, webbrowser
 from copy import copy
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from difflib import SequenceMatcher
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -25,6 +25,11 @@ STATIC = ROOT / "frontend" / "dist"
 DB_FILE = DATA / "housing_cleaner.sqlite3"
 for p in (DATA, UPLOADS, OUTPUTS, RESOURCES): p.mkdir(exist_ok=True)
 init_db(DB_FILE)
+
+
+def utc_now_iso() -> str:
+    """Return a compact, timezone-aware UTC ISO 8601 timestamp."""
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 FILES = {
     "estate": "北京楼盘字典.xlsx",
@@ -484,7 +489,7 @@ def build_output(task, clean_only=False):
             if t and t!="__ignore__": src_by_target.setdefault(t,[]).append(s)
     decisions=confirmed_estates(task)
     building_manual={x["key"]:x.get("selected","") for x in task.get("building_reviews",[]) if x.get("selected")}
-    audit=[]; exceptions=[]; output=[]; now=datetime.now().isoformat(timespec="seconds"); unit_index=load_unit_index()
+    audit=[]; exceptions=[]; output=[]; now=utc_now_iso(); unit_index=load_unit_index()
     community_sources=src_by_target.get("小区",[])
     for source in task["rows"]:
         record={h:"" for h in headers}
@@ -578,7 +583,7 @@ def build_output(task, clean_only=False):
         "阻断异常数量": len(exceptions),
         "审计记录数": len(audit),
         "规则版本": RULE_VERSION,
-        "完成时间": datetime.now().isoformat(timespec="seconds"),
+        "完成时间": utc_now_iso(),
         "清洗规则": rule_snapshot(task),
         "异常详情": exceptions,
         "审计记录": audit,
@@ -663,7 +668,7 @@ class Handler(BaseHTTPRequestHandler):
                 b=self.body(); kind=b.get("kind"); missing=[x["name"] for x in file_status() if not x["exists"]]
                 if missing: raise ValueError("缺少基础文件："+"、".join(missing))
                 if kind not in ("sale","rent"): raise ValueError("请先选择出售或出租")
-                info=template_info(kind); tid=uuid.uuid4().hex[:12]; TASKS[tid]={"id":tid,"kind":kind,"started":datetime.now().isoformat(timespec="seconds"),"entrust_date":str(date.today()),"template_signature":info["signature"]}
+                info=template_info(kind); tid=uuid.uuid4().hex[:12]; TASKS[tid]={"id":tid,"kind":kind,"started":utc_now_iso(),"entrust_date":str(date.today()),"template_signature":info["signature"]}
                 return self.send_json({"taskId":tid,"headers":info["headers"]})
             if path=="/api/upload":
                 tid=self.headers.get("X-Task-Id"); name=unquote(self.headers.get("X-Filename","source.xlsx")); task=get_task(tid); ext=Path(name).suffix.lower()

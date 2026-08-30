@@ -176,7 +176,7 @@ async function exportFile(cleanOnly: boolean) {
 <template>
   <div class="mb-8 flex items-center justify-between">
     <div>
-      <div class="text-sm font-semibold uppercase tracking-widest text-[#b44236]">任务执行</div>
+      <div class="text-sm font-semibold uppercase tracking-widest text-tsinghua">任务执行</div>
       <h1 class="mt-2 text-3xl font-bold text-slate-800">房源数据清洗</h1>
       <p class="mt-2 text-slate-500">从原始文件到标准导入文件，逐步确认每一个关键结果。</p>
     </div>

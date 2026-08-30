@@ -88,7 +88,7 @@ const reportColumns = [
 <template>
   <div class="mb-8 flex flex-wrap items-end justify-between gap-4">
     <div>
-      <div class="text-sm font-semibold uppercase tracking-widest text-[#b44236]">历史报告</div>
+      <div class="text-sm font-semibold uppercase tracking-widest text-tsinghua">历史报告</div>
       <h1 class="mt-2 text-3xl font-bold text-slate-800">清洗任务记录</h1>
       <p class="mt-2 text-slate-500">所有已完成的导出任务都会在这里留下报告。</p>
     </div>

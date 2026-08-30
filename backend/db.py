@@ -109,7 +109,7 @@ def save_report(
         return int(cursor.fetchone()[0])
 
 
-def list_reports(path: Path, page: int = 1, page_size: int = 20, kind: str | None = None) -> dict[str, Any]:
+def list_reports(path: Path, page: int = 1, page_size: int = 10, kind: str | None = None) -> dict[str, Any]:
     page = max(1, page)
     page_size = min(100, max(1, page_size))
     clauses: list[str] = []

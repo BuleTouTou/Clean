@@ -245,6 +245,8 @@ MinIO 启用时，每次任务的文件会上传到 `clean/housing-cleaner/<任�
 | `/api/reports` | GET | 分页查询历史清洗报告 |
 | `/api/reports/{report_id}` | GET | 查询单条历史清洗报告 |
 
+历史报告页面默认每页显示 10 条，可切换为 20、30 或 50 条；接口的 `pageSize` 默认值也是 10。
+
 FastAPI 同时自动提供 OpenAPI 文档：
 
 - `/openapi.json`：机器可读的 OpenAPI 规范。

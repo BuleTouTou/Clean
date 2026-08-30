@@ -21,13 +21,14 @@ import { api, type BatchKind, type ReportItem } from "../../api";
 const message = useMessage();
 const search = ref("");
 const reportPage = ref(1);
+const reportPageSize = ref(10);
 const reportKind = ref<BatchKind | undefined>();
 const showRules = ref(false);
 const selectedReport = ref<ReportItem | null>(null);
 
 const reportQuery = useQuery({
-  queryKey: computed(() => ["reports", reportPage.value, reportKind.value]),
-  queryFn: () => api.reports(reportPage.value, 20, reportKind.value),
+  queryKey: computed(() => ["reports", reportPage.value, reportPageSize.value, reportKind.value]),
+  queryFn: () => api.reports(reportPage.value, reportPageSize.value, reportKind.value),
 });
 
 const filteredReports = computed(() => {
@@ -56,6 +57,11 @@ function openRules(row: ReportItem) {
 
 function formatRules(row: ReportItem | null) {
   return JSON.stringify(row?.report?.["清洗规则"] ?? {}, null, 2);
+}
+
+function updatePageSize(value: number) {
+  reportPageSize.value = value;
+  reportPage.value = 1;
 }
 
 const reportColumns = [
@@ -116,6 +122,12 @@ const reportColumns = [
         placeholder="全部类型"
         :options="[{ label: '出售', value: 'sale' }, { label: '出租', value: 'rent' }]"
       />
+      <n-select
+        :value="reportPageSize"
+        class="w-28"
+        :options="[10, 20, 30, 50].map((value) => ({ label: `${value} 条/页`, value }))"
+        @update:value="updatePageSize"
+      />
     </n-space>
   </div>
 
@@ -124,7 +136,7 @@ const reportColumns = [
       <n-data-table :columns="reportColumns" :data="filteredReports" :bordered="false" :single-line="false" />
       <n-empty v-if="!reportQuery.isLoading.value && !filteredReports.length" description="暂无历史报告" class="py-16" />
       <div class="mt-5 flex justify-end">
-        <n-pagination v-model:page="reportPage" :page-size="20" :item-count="reportQuery.data.value?.total ?? 0" />
+        <n-pagination v-model:page="reportPage" :page-size="reportPageSize" :item-count="reportQuery.data.value?.total ?? 0" />
       </div>
     </n-spin>
   </n-card>

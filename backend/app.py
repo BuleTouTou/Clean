@@ -73,7 +73,7 @@ def status() -> dict[str, Any]:
 
 
 @app.get("/api/reports", operation_id="listReports")
-def reports(page: int = 1, pageSize: int = 20, kind: Literal["sale", "rent"] | None = None) -> dict[str, Any]:
+def reports(page: int = 1, pageSize: int = 10, kind: Literal["sale", "rent"] | None = None) -> dict[str, Any]:
     return list_reports(legacy.DB_FILE, page, pageSize, kind)
 
 

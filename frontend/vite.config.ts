@@ -1,8 +1,9 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
+import VueRouter from "unplugin-vue-router/vite";
 
-export default defineConfig({
-  plugins: [vue()],
+export default defineConfig(({ command }) => ({
+  plugins: [VueRouter({ routesFolder: "src/pages", watch: command === "serve" }), vue()],
   server: {
     host: "127.0.0.1",
     port: 5173,
@@ -21,4 +22,4 @@ export default defineConfig({
       },
     },
   },
-});
+}));

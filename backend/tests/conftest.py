@@ -1,4 +1,20 @@
+import os
+import shutil
+import tempfile
+from pathlib import Path
+
 import pytest
+
+
+TEST_ROOT = Path(tempfile.gettempdir()) / f"housing-cleaner-tests-{os.getpid()}"
+os.environ["DATABASE_URL"] = f"sqlite:///{TEST_ROOT / 'test.sqlite3'}"
+os.environ["WORK_DIR"] = str(TEST_ROOT / "work")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def isolated_test_workspace():
+    yield
+    shutil.rmtree(TEST_ROOT, ignore_errors=True)
 
 
 @pytest.fixture(autouse=True)

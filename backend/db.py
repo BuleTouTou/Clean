@@ -1,112 +1,146 @@
 from __future__ import annotations
 
 import json
-import sqlite3
+import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import DateTime, Integer, JSON, String, Text, UniqueConstraint, create_engine, func, select
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
+
+ROOT = Path(__file__).resolve().parent.parent
 LEGACY_BEIJING_TIMEZONE = timezone(timedelta(hours=8))
 UTC_TIMEZONE = timezone.utc
 
 
-def _normalize_utc_iso(value: str, naive_timezone: timezone = LEGACY_BEIJING_TIMEZONE) -> str:
-    """Normalize an ISO timestamp to a UTC value with a trailing ``Z``.
+def get_database_url() -> str:
+    """Use PostgreSQL when configured, with SQLite only as a local/test fallback."""
+    return os.getenv("DATABASE_URL", f"sqlite:///{ROOT / 'data' / 'housing_cleaner.sqlite3'}")
 
-    Timestamps written by older versions had no timezone and represented Beijing
-    local time, so those values are interpreted as Asia/Shanghai during migration.
-    """
-    raw = str(value or "").strip()
-    if not raw:
-        return raw
-    try:
-        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-    except ValueError:
-        return raw
+
+class Base(DeclarativeBase):
+    pass
+
+
+json_type = JSON().with_variant(JSONB(), "postgresql")
+
+
+class TaskReport(Base):
+    __tablename__ = "task_reports"
+    __table_args__ = (UniqueConstraint("task_id", name="uq_task_reports_task_id"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    task_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    original_name: Mapped[str] = mapped_column(Text, nullable=False)
+    entrust_date: Mapped[str | None] = mapped_column(String(32))
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    completed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    input_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    output_rows: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    blocking_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    audit_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    source_url: Mapped[str | None] = mapped_column(Text)
+    source_object_key: Mapped[str | None] = mapped_column(Text)
+    output_file: Mapped[str | None] = mapped_column(Text)
+    output_url: Mapped[str | None] = mapped_column(Text)
+    output_object_key: Mapped[str | None] = mapped_column(Text)
+    report_json: Mapped[dict[str, Any]] = mapped_column(json_type, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC_TIMEZONE)
+    )
+
+
+class AppSetting(Base):
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[dict[str, Any]] = mapped_column(json_type, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC_TIMEZONE),
+        onupdate=lambda: datetime.now(UTC_TIMEZONE),
+    )
+
+
+_engine = None
+_engine_url: str | None = None
+
+
+def get_engine():
+    global _engine, _engine_url
+    url = get_database_url()
+    if _engine is None or _engine_url != url:
+        if _engine is not None:
+            _engine.dispose()
+        connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
+        _engine = create_engine(url, pool_pre_ping=True, connect_args=connect_args)
+        _engine_url = url
+    return _engine
+
+
+def get_session_factory():
+    return sessionmaker(bind=get_engine(), expire_on_commit=False)
+
+
+def init_db() -> None:
+    """Create missing tables for tests/direct runs; containers use Alembic."""
+    if get_database_url().startswith("sqlite"):
+        (ROOT / "data").mkdir(parents=True, exist_ok=True)
+    Base.metadata.create_all(get_engine())
+
+
+def _normalize_datetime(value: str | datetime, naive_timezone: timezone = LEGACY_BEIJING_TIMEZONE) -> datetime:
+    parsed = value if isinstance(value, datetime) else datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=naive_timezone)
-    return parsed.astimezone(UTC_TIMEZONE).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return parsed.astimezone(UTC_TIMEZONE)
 
 
-def _migrate_report_timestamps(raw_report: str) -> str:
-    try:
-        report = json.loads(raw_report)
-    except (TypeError, json.JSONDecodeError):
-        return raw_report
+def _utc_iso(value: datetime | str | None) -> str:
+    if value is None:
+        return ""
+    return _normalize_datetime(value, UTC_TIMEZONE).isoformat(timespec="seconds").replace("+00:00", "Z")
 
+
+def _normalize_report(report: dict[str, Any]) -> dict[str, Any]:
+    normalized = json.loads(json.dumps(report, ensure_ascii=False, default=str))
     for key in ("任务开始时间", "完成时间"):
-        if key in report:
-            report[key] = _normalize_utc_iso(report[key])
-    for entry in report.get("审计记录") or []:
-        if isinstance(entry, dict) and "操作时间" in entry:
-            entry["操作时间"] = _normalize_utc_iso(entry["操作时间"])
-    return json.dumps(report, ensure_ascii=False)
+        if normalized.get(key):
+            normalized[key] = _utc_iso(normalized[key])
+    for entry in normalized.get("审计记录") or []:
+        if isinstance(entry, dict) and entry.get("操作时间"):
+            entry["操作时间"] = _utc_iso(entry["操作时间"])
+    return normalized
 
 
-def _migrate_legacy_timestamps(connection: sqlite3.Connection) -> None:
-    rows = connection.execute(
-        "SELECT id, started_at, completed_at, created_at, report_json FROM task_reports"
-    ).fetchall()
-    for row in rows:
-        started_at = _normalize_utc_iso(row[1])
-        completed_at = _normalize_utc_iso(row[2])
-        created_at = _normalize_utc_iso(row[3], UTC_TIMEZONE)
-        report_json = _migrate_report_timestamps(row[4])
-        if (started_at, completed_at, created_at, report_json) != (row[1], row[2], row[3], row[4]):
-            connection.execute(
-                "UPDATE task_reports SET started_at = ?, completed_at = ?, created_at = ?, report_json = ? WHERE id = ?",
-                (started_at, completed_at, created_at, report_json, row[0]),
-            )
-
-
-def connect(path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(path)
-    connection.row_factory = sqlite3.Row
-    return connection
-
-
-def init_db(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with connect(path) as connection:
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS task_reports (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task_id TEXT NOT NULL UNIQUE,
-                kind TEXT NOT NULL,
-                original_name TEXT NOT NULL,
-                entrust_date TEXT,
-                started_at TEXT NOT NULL,
-                completed_at TEXT NOT NULL,
-                input_rows INTEGER NOT NULL DEFAULT 0,
-                output_rows INTEGER NOT NULL DEFAULT 0,
-                blocking_count INTEGER NOT NULL DEFAULT 0,
-                audit_count INTEGER NOT NULL DEFAULT 0,
-                source_url TEXT,
-                source_object_key TEXT,
-                output_file TEXT,
-                output_url TEXT,
-                output_object_key TEXT,
-                report_json TEXT NOT NULL,
-                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
-            )
-            """
-        )
-        columns = {row[1] for row in connection.execute("PRAGMA table_info(task_reports)")}
-        for name, definition in {
-            "source_url": "TEXT",
-            "source_object_key": "TEXT",
-            "output_url": "TEXT",
-            "output_object_key": "TEXT",
-        }.items():
-            if name not in columns:
-                connection.execute(f"ALTER TABLE task_reports ADD COLUMN {name} {definition}")
-        _migrate_legacy_timestamps(connection)
+def _report_dict(row: TaskReport) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "task_id": row.task_id,
+        "kind": row.kind,
+        "original_name": row.original_name,
+        "entrust_date": row.entrust_date,
+        "started_at": _utc_iso(row.started_at),
+        "completed_at": _utc_iso(row.completed_at),
+        "input_rows": row.input_rows,
+        "output_rows": row.output_rows,
+        "blocking_count": row.blocking_count,
+        "audit_count": row.audit_count,
+        "source_url": row.source_url,
+        "source_object_key": row.source_object_key,
+        "output_file": row.output_file,
+        "output_url": row.output_url,
+        "output_object_key": row.output_object_key,
+        "report": row.report_json,
+    }
 
 
 def save_report(
-    path: Path,
     task_id: str,
     kind: str,
     report: dict[str, Any],
@@ -117,86 +151,69 @@ def save_report(
     output_url: str | None = None,
     output_object_key: str | None = None,
 ) -> int:
-    report_json = _migrate_report_timestamps(json.dumps(report, ensure_ascii=False))
-    started_at = _normalize_utc_iso(report.get("任务开始时间", ""))
-    completed_at = _normalize_utc_iso(report.get("完成时间", ""))
-    created_at = datetime.now(UTC_TIMEZONE).isoformat(timespec="seconds").replace("+00:00", "Z")
-    with connect(path) as connection:
-        cursor = connection.execute(
-            """
-            INSERT INTO task_reports (
-                task_id, kind, original_name, entrust_date, started_at, completed_at,
-                input_rows, output_rows, blocking_count, audit_count, source_url, source_object_key, output_file, output_url, output_object_key, report_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(task_id) DO UPDATE SET
-                kind=excluded.kind,
-                original_name=excluded.original_name,
-                entrust_date=excluded.entrust_date,
-                started_at=excluded.started_at,
-                completed_at=excluded.completed_at,
-                input_rows=excluded.input_rows,
-                output_rows=excluded.output_rows,
-                blocking_count=excluded.blocking_count,
-                audit_count=excluded.audit_count,
-                source_url=excluded.source_url,
-                source_object_key=excluded.source_object_key,
-                output_file=excluded.output_file,
-                output_url=excluded.output_url,
-                output_object_key=excluded.output_object_key,
-                report_json=excluded.report_json
-            RETURNING id
-            """,
-            (
-                task_id,
-                kind,
-                str(report.get("原始文件名", "")),
-                report.get("委托日期"),
-                started_at,
-                completed_at,
-                int(report.get("原始记录数", 0)),
-                int(report.get("最终输出记录数", 0)),
-                int(report.get("阻断异常数量", 0)),
-                int(audit_count),
-                source_url,
-                source_object_key,
-                output_file,
-                output_url,
-                output_object_key,
-                report_json,
-                created_at,
-            ),
-        )
-        return int(cursor.fetchone()[0])
+    normalized = _normalize_report(report)
+    Session = get_session_factory()
+    with Session.begin() as session:
+        row = session.scalar(select(TaskReport).where(TaskReport.task_id == task_id))
+        if row is None:
+            row = TaskReport(task_id=task_id)
+            session.add(row)
+        row.kind = kind
+        row.original_name = str(normalized.get("原始文件名", ""))
+        row.entrust_date = normalized.get("委托日期")
+        row.started_at = _normalize_datetime(normalized["任务开始时间"])
+        row.completed_at = _normalize_datetime(normalized["完成时间"])
+        row.input_rows = int(normalized.get("原始记录数", 0))
+        row.output_rows = int(normalized.get("最终输出记录数", 0))
+        row.blocking_count = int(normalized.get("阻断异常数量", 0))
+        row.audit_count = int(audit_count)
+        row.source_url = source_url
+        row.source_object_key = source_object_key
+        row.output_file = output_file
+        row.output_url = output_url
+        row.output_object_key = output_object_key
+        row.report_json = normalized
+        session.flush()
+        return row.id
 
 
-def list_reports(path: Path, page: int = 1, page_size: int = 10, kind: str | None = None) -> dict[str, Any]:
+def list_reports(page: int = 1, page_size: int = 10, kind: str | None = None) -> dict[str, Any]:
     page = max(1, page)
     page_size = min(100, max(1, page_size))
-    clauses: list[str] = []
-    params: list[Any] = []
-    if kind in ("sale", "rent"):
-        clauses.append("kind = ?")
-        params.append(kind)
-    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
-    with connect(path) as connection:
-        total = int(connection.execute(f"SELECT COUNT(*) FROM task_reports{where}", params).fetchone()[0])
-        rows = connection.execute(
-            f"SELECT id, task_id, kind, original_name, entrust_date, started_at, completed_at, input_rows, output_rows, blocking_count, audit_count, source_url, source_object_key, output_file, output_url, output_object_key, report_json FROM task_reports{where} ORDER BY completed_at DESC, id DESC LIMIT ? OFFSET ?",
-            [*params, page_size, (page - 1) * page_size],
-        ).fetchall()
-    items = []
-    for row in rows:
-        item = dict(row)
-        item["report"] = json.loads(item.pop("report_json"))
-        items.append(item)
-    return {"items": items, "total": total, "page": page, "pageSize": page_size}
+    filters = [TaskReport.kind == kind] if kind in ("sale", "rent") else []
+    Session = get_session_factory()
+    with Session() as session:
+        total = int(session.scalar(select(func.count()).select_from(TaskReport).where(*filters)) or 0)
+        rows = session.scalars(
+            select(TaskReport)
+            .where(*filters)
+            .order_by(TaskReport.completed_at.desc(), TaskReport.id.desc())
+            .limit(page_size)
+            .offset((page - 1) * page_size)
+        ).all()
+        return {"items": [_report_dict(row) for row in rows], "total": total, "page": page, "pageSize": page_size}
 
 
-def get_report(path: Path, report_id: int) -> dict[str, Any] | None:
-    with connect(path) as connection:
-        row = connection.execute("SELECT * FROM task_reports WHERE id = ?", (report_id,)).fetchone()
-    if row is None:
-        return None
-    item = dict(row)
-    item["report"] = json.loads(item.pop("report_json"))
-    return item
+def get_report(report_id: int) -> dict[str, Any] | None:
+    Session = get_session_factory()
+    with Session() as session:
+        row = session.get(TaskReport, report_id)
+        return _report_dict(row) if row is not None else None
+
+
+def load_setting(key: str, default: dict[str, Any]) -> dict[str, Any]:
+    Session = get_session_factory()
+    with Session() as session:
+        row = session.get(AppSetting, key)
+        return json.loads(json.dumps(row.value if row is not None else default))
+
+
+def save_setting(key: str, value: dict[str, Any]) -> None:
+    Session = get_session_factory()
+    with Session.begin() as session:
+        row = session.get(AppSetting, key)
+        if row is None:
+            session.add(AppSetting(key=key, value=value))
+        else:
+            row.value = value
+            row.updated_at = datetime.now(UTC_TIMEZONE)

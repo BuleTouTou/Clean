@@ -3,11 +3,11 @@ from __future__ import annotations
 from datetime import date
 from pathlib import Path
 from typing import Any, Literal
-from urllib.parse import unquote
+from urllib.parse import quote, unquote
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -74,20 +74,20 @@ def status() -> dict[str, Any]:
 
 @app.get("/api/reports", operation_id="listReports")
 def reports(page: int = 1, pageSize: int = 10, kind: Literal["sale", "rent"] | None = None) -> dict[str, Any]:
-    return list_reports(legacy.DB_FILE, page, pageSize, kind)
+    return list_reports(page, pageSize, kind)
 
 
 @app.get("/api/reports/{report_id}", operation_id="getReport")
 def report_detail(report_id: int) -> dict[str, Any]:
-    item = get_report(legacy.DB_FILE, report_id)
+    item = get_report(report_id)
     if item is None:
         raise HTTPException(status_code=404, detail="历史报告不存在")
     return item
 
 
 @app.get("/api/reports/{report_id}/download", response_model=None, operation_id="downloadReport")
-def download_report(report_id: int) -> FileResponse | RedirectResponse:
-    item = get_report(legacy.DB_FILE, report_id)
+def download_report(report_id: int) -> FileResponse | StreamingResponse:
+    item = get_report(report_id)
     if item is None:
         raise HTTPException(status_code=404, detail="历史报告不存在")
 
@@ -96,13 +96,17 @@ def download_report(report_id: int) -> FileResponse | RedirectResponse:
         storage = get_storage()
         if storage is None:
             raise HTTPException(status_code=503, detail="OSS 存储未启用")
-        return RedirectResponse(storage.presigned_get_url(str(object_key)))
+        filename = Path(str(object_key)).name
+        return StreamingResponse(
+            storage.iter_object(str(object_key)),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(filename)}"},
+        )
 
     output_file = item.get("output_file")
     if output_file:
         path = (legacy.ROOT / str(output_file)).resolve()
-        root = legacy.ROOT.resolve()
-        if root not in path.parents or not path.is_file():
+        if not legacy.is_managed_path(path) or not path.is_file():
             raise HTTPException(status_code=404, detail="导出文件不存在")
         return FileResponse(
             path,
@@ -233,7 +237,7 @@ def export(body: ExportRequest) -> dict[str, Any]:
 @app.get("/download/{token}", response_model=None, operation_id="downloadFile")
 def download(token: str) -> FileResponse | RedirectResponse:
     path = legacy.resolve_download(token)
-    if path is None or not path.exists() or legacy.ROOT.resolve() not in path.resolve().parents:
+    if path is None or not path.exists() or not legacy.is_managed_path(path):
         return RedirectResponse(url="/?download=missing", status_code=302)
     return FileResponse(path, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", filename=path.name)
 

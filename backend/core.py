@@ -10,21 +10,20 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse, unquote
 
 import openpyxl
-from .db import init_db, save_report
+from .db import init_db, load_setting, save_report, save_setting
 from .storage import get_storage
 
 # core.py 位于 backend/ 包内，项目根目录是其父目录。
 ROOT = Path(__file__).resolve().parent.parent
-DATA = ROOT / "data"
+DATA = Path(os.getenv("WORK_DIR", str(ROOT / "data"))).resolve()
 UPLOADS = DATA / "uploads"
-OUTPUTS = ROOT / "outputs"
+OUTPUTS = DATA / "outputs"
 RESOURCES = ROOT / "resources"
-RULES_FILE = DATA / "rules.json"
+RULES_FILE = ROOT / "data" / "rules.json"
 DOWNLOADS_FILE = DATA / "downloads.json"
 STATIC = ROOT / "frontend" / "dist"
-DB_FILE = DATA / "housing_cleaner.sqlite3"
-for p in (DATA, UPLOADS, OUTPUTS, RESOURCES): p.mkdir(exist_ok=True)
-init_db(DB_FILE)
+for p in (DATA, UPLOADS, OUTPUTS, RESOURCES): p.mkdir(parents=True, exist_ok=True)
+init_db()
 
 
 def utc_now_iso() -> str:
@@ -57,10 +56,24 @@ SYSTEM_BLANK = re.compile(r"(?!)")
 TEXT_FIELD = re.compile(r"(编号|电话|联系方式|工号|代码)$")
 
 def jload(path: Path, default):
+    if path == RULES_FILE:
+        try:
+            legacy_default = json.loads(path.read_text("utf-8")) if path.is_file() else default
+        except Exception:
+            legacy_default = default
+        return load_setting("cleaning_rules", legacy_default)
     try: return json.loads(path.read_text("utf-8"))
     except Exception: return default
 
-def jsave(path: Path, obj): path.write_text(json.dumps(obj, ensure_ascii=False, indent=2), "utf-8")
+def jsave(path: Path, obj):
+    if path == RULES_FILE:
+        save_setting("cleaning_rules", obj)
+        return
+    path.write_text(json.dumps(obj, ensure_ascii=False, indent=2), "utf-8")
+
+def is_managed_path(path: Path) -> bool:
+    resolved = path.resolve()
+    return any(root.resolve() == resolved or root.resolve() in resolved.parents for root in (ROOT, DATA))
 
 def register_download(path: Path):
     token=uuid.uuid4().hex
@@ -76,7 +89,7 @@ def resolve_download(token):
     raw=jload(DOWNLOADS_FILE,{}).get(token)
     if raw:
         fp=Path(raw).resolve()
-        if ROOT.resolve() in fp.parents:
+        if is_managed_path(fp):
             DOWNLOADS[token]=fp
             return fp
     return None
@@ -605,7 +618,6 @@ def build_output(task, clean_only=False):
         output_info = artifacts[outpath.name]
         output_url = str(output_info["url"])
         output_object_key = str(output_info["objectKey"])
-        download_url = storage.presigned_get_url(output_object_key)
         shutil.rmtree(outdir)
         source_path = task.get("source_path")
         if source_path and Path(source_path).exists():
@@ -617,7 +629,10 @@ def build_output(task, clean_only=False):
     else:
         (outdir / "清洗报告.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), "utf-8")
         download_id = register_download(outpath)
-        output_file = str(outpath.relative_to(ROOT))
+        try:
+            output_file = str(outpath.relative_to(ROOT))
+        except ValueError:
+            output_file = str(outpath)
 
     # Uploads are isolated under data/uploads/<task_id>/; remove the
     # temporary task directory after export in both local and OSS modes.
@@ -625,10 +640,8 @@ def build_output(task, clean_only=False):
     if task_upload_dir.is_dir():
         shutil.rmtree(task_upload_dir, ignore_errors=True)
 
-    task["last_export"]={"file":output_file,"downloadId":download_id,"ossUrl":output_url,"downloadUrl":download_url,"ossObjectKey":output_object_key,"artifacts":artifacts,"report":report,"audit":len(audit),"exceptions":exceptions}
     source_info = task.get("source_artifact") or {}
-    save_report(
-        DB_FILE,
+    report_id = save_report(
         task["id"],
         kind,
         report,
@@ -639,6 +652,9 @@ def build_output(task, clean_only=False):
         output_url,
         output_object_key,
     )
+    if output_object_key:
+        download_url = f"/api/reports/{report_id}/download"
+    task["last_export"]={"file":output_file,"downloadId":download_id,"ossUrl":output_url,"downloadUrl":download_url,"ossObjectKey":output_object_key,"artifacts":artifacts,"report":report,"audit":len(audit),"exceptions":exceptions}
     return task["last_export"]
 
 class Handler(BaseHTTPRequestHandler):

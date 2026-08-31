@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import mimetypes
 import os
-from datetime import timedelta
 from pathlib import Path
 from urllib.parse import quote, urlsplit, urlunsplit
 
@@ -41,12 +40,15 @@ class MinioStorage:
             "contentType": content_type,
         }
 
-    def presigned_get_url(self, object_key: str, expires_seconds: int = 3600) -> str:
-        return self.client.presigned_get_object(
-            self.bucket,
-            object_key,
-            expires=timedelta(seconds=expires_seconds),
-        )
+    def iter_object(self, object_key: str, chunk_size: int = 1024 * 1024):
+        """Stream a private object through the application without exposing an internal MinIO hostname."""
+        response = self.client.get_object(self.bucket, object_key)
+        try:
+            while chunk := response.read(chunk_size):
+                yield chunk
+        finally:
+            response.close()
+            response.release_conn()
 
 
 def _env_flag(name: str, default: bool = False) -> bool:

@@ -36,7 +36,8 @@
 
 ## 4. 技术选型与迁移说明
 
-- **后端采用 FastAPI**：提供类型化请求校验、自动 OpenAPI 文档和 ASGI 并发模型，适合当前这种本地 API + 文件处理服务。生产启动入口为 `backend.app:app`，由 Uvicorn 承载。
+- **后端采用 FastAPI**：提供类型化请求校验、自动 OpenAPI 文档和 ASGI 并发模型。生产启动入口为 `backend.app:app`，由 Uvicorn 承载。
+- **持久化采用 PostgreSQL + MinIO**：PostgreSQL 保存历史报告与已确认规则，MinIO 保存原始上传文件和最终 Excel。SQLite 仅保留为直接运行和单元测试的兼容回退，不作为容器部署数据库。
 - **前端采用 TypeScript + Vite**：页面入口和 API 类型定义位于 `frontend/src/`，Vite 将 TypeScript、CSS 和 HTML 构建到 `frontend/dist/`，后端只负责托管构建产物。
 - **样式采用 Tailwind CSS 4**：通过官方 `@tailwindcss/vite` 插件集成，入口文件使用 Tailwind 4 的 `@import "tailwindcss"`，不再使用 Tailwind 3 的 PostCSS 配置或 `@tailwind base/components/utilities` 指令。
 - **前端采用文件路由**：使用 `unplugin-vue-router` 根据 `frontend/src/pages/` 自动生成 Vue Router 路由。页面按文件组织，`App.vue` 只负责全局布局和路由出口。
@@ -53,7 +54,8 @@ backend/
 ├── __init__.py       # 包入口
 ├── app.py            # FastAPI 应用、请求模型、API 路由和静态文件挂载
 ├── core.py           # 文件处理、匹配、清洗和导出核心逻辑
-├── db.py             # SQLite 历史报告读写
+├── db.py             # PostgreSQL/SQLAlchemy 数据访问
+├── migrations/       # Alembic 数据库迁移
 ├── export_openapi.py # 导出 OpenAPI 规范供 Worma 使用
 └── tests/             # 后端测试
 ```
@@ -90,6 +92,35 @@ backend/
 ```
 
 ## 7. 运行环境
+
+### 7.1 OrbStack / Docker 本地部署（推荐）
+
+项目只构建一个业务镜像；PostgreSQL 和 MinIO 使用官方镜像，由 `compose.yaml` 编排为三个独立容器：
+
+```text
+app (Vue + FastAPI) → postgres
+                  └→ minio
+```
+
+首次启动：
+
+```bash
+cp .env.example .env
+# 修改 .env 中的 PostgreSQL 与 MinIO 密码
+docker compose up --build -d --wait
+```
+
+访问地址：应用 `http://localhost:8765`，MinIO 控制台 `http://localhost:9001`，PostgreSQL `localhost:5432`。
+
+```bash
+docker compose ps
+docker compose logs -f app
+docker compose down  # 停止服务但保留数据
+```
+
+不要随意执行 `docker compose down -v`，该命令会一并删除 PostgreSQL 和 MinIO 的本地数据卷。
+
+### 7.2 直接运行开发环境
 
 - macOS、Linux 或 Windows 10/11
 - [uv](https://docs.astral.sh/uv/)（负责 Python 版本、虚拟环境和依赖管理）
@@ -163,6 +194,8 @@ uv run --project backend python -m uvicorn backend.app:app --host 0.0.0.0 --port
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
+| `DATABASE_URL` | 本地 SQLite 兼容地址 | 容器环境必须设置为 PostgreSQL，例如 `postgresql+psycopg://user:password@postgres:5432/housing_cleaner` |
+| `WORK_DIR` | `data/` | 上传和导出过程中的临时工作目录；容器中使用 `/tmp/housing-cleaner` |
 | `UV_PYTHON` | `backend/.python-version` | 临时覆盖 uv 使用的 Python 解释器 |
 | `MINIO_ENABLED` | `false` | 是否启用 MinIO 文件存储 |
 | `MINIO_ENDPOINT` | 无 | MinIO 服务地址，例如 `http://localhost:9000` |
@@ -171,7 +204,7 @@ uv run --project backend python -m uvicorn backend.app:app --host 0.0.0.0 --port
 | `MINIO_BUCKET` | 无 | 存放清洗文件的 Bucket，必须由部署环境提供 |
 | `MINIO_PUBLIC_ENDPOINT` | 同 `MINIO_ENDPOINT` | 数据库中 OSS URL 使用的可访问地址 |
 
-开发环境可以复制根目录的 `.env.example` 为 `.env`，再填写 MinIO 凭据。`.env` 已加入 Git 忽略规则，正式环境应通过部署平台的 Secret 注入配置，不要把生产地址和密钥提交到仓库。当前项目约定使用 Bucket `clean`，MinIO 启用后只上传原始文件和最终 Excel；清洗报告 JSON 直接保存到数据库，其中包含异常详情、审计记录和清洗规则快照，数据库保存输入和输出文件的 OSS URL、对象键。
+开发环境可以复制根目录的 `.env.example` 为 `.env`，再填写 PostgreSQL 和 MinIO 凭据。`.env` 已加入 Git 忽略规则，正式环境应通过部署平台的 Secret 注入配置。当前项目约定使用 Bucket `clean`；清洗报告、异常详情、审计记录和规则快照保存为 PostgreSQL `JSONB`。浏览器下载统一经过 FastAPI 转发，不暴露容器内部的 `http://minio:9000` 地址。
 
 数据库中的任务开始时间、完成时间和审计操作时间统一保存为带 `Z` 后缀的 UTC ISO 8601 字符串（例如 `2026-08-30T16:18:30Z`）。前端展示时通过浏览器 `Intl.DateTimeFormat` 转换为北京时间（`Asia/Shanghai`），不依赖访问者电脑的本地时区。
 
@@ -182,7 +215,8 @@ uv run --project backend python -m uvicorn backend.app:app --host 0.0.0.0 --port
 ├── backend/                  # FastAPI 后端包
 │   ├── app.py                # ASGI 应用和 API 路由
 │   ├── core.py               # 文件处理、匹配、清洗和导出核心逻辑
-│   ├── db.py                 # SQLite 历史报告读写
+│   ├── db.py                 # SQLAlchemy 数据访问和模型
+│   ├── migrations/           # Alembic PostgreSQL 迁移
 │   ├── export_openapi.py     # 导出 OpenAPI 规范供 Worma 使用
 │   ├── pyproject.toml        # uv 项目配置和依赖声明
 │   ├── uv.lock               # 后端依赖锁定文件
@@ -211,18 +245,20 @@ uv run --project backend python -m uvicorn backend.app:app --host 0.0.0.0 --port
 │   ├── 北京-单元楼盘字典.xlsx
 │   ├── 售房数据导入模版.xlsx
 │   └── 租房数据导入模版 .xlsx
-├── data/                     # SQLite、规则和本地开发兼容数据（Git 忽略）
-└── outputs/                  # MinIO 未启用时的本地开发回退目录（Git 忽略）
+├── Dockerfile                # Vue + FastAPI 业务镜像
+├── compose.yaml              # app、PostgreSQL、MinIO 本地编排
+├── data/                     # 旧 SQLite、规则和直接运行兼容数据（Git 忽略）
+└── outputs/                  # 旧版本本地导出兼容目录（Git 忽略）
 ```
 
 首次执行 `uv sync --project backend` 后会使用 `backend/uv.lock`。依赖版本稳定后，建议将该锁文件一并提交，以保证不同机器使用相同版本的后端依赖。
 
 ## 12. 输出文件规范
 
-MinIO 启用时，每次任务的文件会上传到 `clean/housing-cleaner/<任务 ID>/`；MinIO 未启用时才会在本地 `outputs/<任务 ID>/` 下生成回退文件：
+MinIO 启用时，每次任务的文件会上传到 `clean/housing-cleaner/<任务 ID>/`；MinIO 未启用时才会在 `WORK_DIR/outputs/<任务 ID>/` 下生成回退文件：
 
 - `售房清洗导入_时间戳.xlsx` 或 `租房清洗导入_时间戳.xlsx`：最终导入文件。
-- `清洗报告.json`：MinIO 未启用的本地回退模式下生成；生产模式下报告内容直接保存到 SQLite 的 JSON 文本字段，其中包含异常详情、字段级审计记录和清洗规则快照。
+- `清洗报告.json`：MinIO 未启用的兼容模式下生成；容器模式下报告内容直接保存到 PostgreSQL `JSONB`，其中包含异常详情、字段级审计记录和清洗规则快照。
 
 导出的 Excel 会保留模板样式，从第 2 行开始写入数据；编号、电话、工号、代码等文本字段按文本格式写出，避免前导零丢失。
 
@@ -317,7 +353,7 @@ uv run --project backend python backend/tests/test_real_data.py /path/to/source.
 - 共享测试数据时，应先脱敏业主姓名、联系方式、房源编号等字段。
 - 修改清洗规则时，应同步检查历史报告中的审计记录和异常详情，避免静默改变历史结果。
 - 变更模板表头后，应新建清洗批次，不要复用旧任务。
-- 当前版本仍兼容从 `data/rules.json` 读取和保存可复用规则；每次导出时，实际使用的规则快照会同时写入 SQLite 历史报告，因此历史报告不依赖后续规则文件变化。正式多实例部署时，建议将可复用规则进一步迁移为独立数据库表。
+- 容器模式下，可复用规则保存到 PostgreSQL `app_settings`；每次导出使用的规则快照仍会写入对应历史报告。旧 `data/rules.json` 仅供非容器兼容模式读取。
 
 ## 16. 常见问题
 

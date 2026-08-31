@@ -38,6 +38,286 @@ export type ExtractResponded<
       : Default
     : Default;
 
+interface loginExtraConfig {
+  data: ComponentTypes.LoginRequest;
+}
+/**
+ * ---
+ *
+ * [POST] Login
+ *
+ * **path:** /api/auth/login
+ *
+ * ---
+ *
+ * **RequestBody**
+ * ```ts
+ * type RequestBody = {
+ *   // [title] Username
+ *   username: string
+ *   // [title] Password
+ *   password: string
+ * }
+ * ```
+ *
+ * ---
+ *
+ * **Response**
+ * ```ts
+ * type Response = Record<string, any>
+ * ```
+ *
+ */
+export function login<Config extends Alova2MethodConfig<Record<string, any>> & loginExtraConfig>(
+  config: Config
+): Alova2Method<ExtractResponded<Config, 'login', Record<string, any>>> {
+  const { url, data, mergedConfig } = buildPayload('/api/auth/login', generalDefaultConfig, login.name, config);
+  return alovaInstance.Request<ExtractResponded<Config, 'login', Record<string, any>>>({
+    ...mergedConfig,
+    url,
+    data,
+    method: 'POST'
+  });
+}
+
+interface getCurrentUserExtraConfig {}
+/**
+ * ---
+ *
+ * [GET] Me
+ *
+ * **path:** /api/auth/me
+ *
+ * ---
+ *
+ * **Response**
+ * ```ts
+ * type Response = Record<string, any>
+ * ```
+ *
+ */
+export function getCurrentUser<Config extends Alova2MethodConfig<Record<string, any>> & getCurrentUserExtraConfig>(
+  config?: Config
+): Alova2Method<ExtractResponded<Config, 'getCurrentUser', Record<string, any>>> {
+  const { url, data, mergedConfig } = buildPayload('/api/auth/me', generalDefaultConfig, getCurrentUser.name, config);
+  return alovaInstance.Request<ExtractResponded<Config, 'getCurrentUser', Record<string, any>>>({
+    ...mergedConfig,
+    url,
+    data,
+    method: 'GET'
+  });
+}
+
+interface changeCurrentPasswordExtraConfig {
+  data: ComponentTypes.ChangePasswordRequest;
+}
+/**
+ * ---
+ *
+ * [POST] Change Current Password
+ *
+ * **path:** /api/auth/change-password
+ *
+ * ---
+ *
+ * **RequestBody**
+ * ```ts
+ * type RequestBody = {
+ *   // [title] Currentpassword
+ *   currentPassword: string
+ *   // [title] Newpassword
+ *   newPassword: string
+ * }
+ * ```
+ *
+ * ---
+ *
+ * **Response**
+ * ```ts
+ * type Response = Record<string, any>
+ * ```
+ *
+ */
+export function changeCurrentPassword<
+  Config extends Alova2MethodConfig<Record<string, any>> & changeCurrentPasswordExtraConfig
+>(config: Config): Alova2Method<ExtractResponded<Config, 'changeCurrentPassword', Record<string, any>>> {
+  const { url, data, mergedConfig } = buildPayload(
+    '/api/auth/change-password',
+    generalDefaultConfig,
+    changeCurrentPassword.name,
+    config
+  );
+  return alovaInstance.Request<ExtractResponded<Config, 'changeCurrentPassword', Record<string, any>>>({
+    ...mergedConfig,
+    url,
+    data,
+    method: 'POST'
+  });
+}
+
+interface logoutExtraConfig {}
+/**
+ * ---
+ *
+ * [POST] Logout
+ *
+ * **path:** /api/auth/logout
+ *
+ * ---
+ *
+ * **Response**
+ * ```ts
+ * type Response = Record<string, boolean>
+ * ```
+ *
+ */
+export function logout<Config extends Alova2MethodConfig<Record<string, boolean>> & logoutExtraConfig>(
+  config?: Config
+): Alova2Method<ExtractResponded<Config, 'logout', Record<string, boolean>>> {
+  const { url, data, mergedConfig } = buildPayload('/api/auth/logout', generalDefaultConfig, logout.name, config);
+  return alovaInstance.Request<ExtractResponded<Config, 'logout', Record<string, boolean>>>({
+    ...mergedConfig,
+    url,
+    data,
+    method: 'POST'
+  });
+}
+
+interface listUsersExtraConfig {}
+/**
+ * ---
+ *
+ * [GET] Users
+ *
+ * **path:** /api/users
+ *
+ * ---
+ *
+ * **Response**
+ * ```ts
+ * type Response = Record<string, any>
+ * ```
+ *
+ */
+export function listUsers<Config extends Alova2MethodConfig<Record<string, any>> & listUsersExtraConfig>(
+  config?: Config
+): Alova2Method<ExtractResponded<Config, 'listUsers', Record<string, any>>> {
+  const { url, data, mergedConfig } = buildPayload('/api/users', generalDefaultConfig, listUsers.name, config);
+  return alovaInstance.Request<ExtractResponded<Config, 'listUsers', Record<string, any>>>({
+    ...mergedConfig,
+    url,
+    data,
+    method: 'GET'
+  });
+}
+
+interface createUserExtraConfig {
+  data: ComponentTypes.CreateUserRequest;
+}
+/**
+ * ---
+ *
+ * [POST] Add User
+ *
+ * **path:** /api/users
+ *
+ * ---
+ *
+ * **RequestBody**
+ * ```ts
+ * type RequestBody = {
+ *   // [title] Username
+ *   username: string
+ *   // [title] Name
+ *   name: string
+ *   // [title] Initialpassword
+ *   initialPassword: string
+ * }
+ * ```
+ *
+ * ---
+ *
+ * **Response**
+ * ```ts
+ * type Response = Record<string, any>
+ * ```
+ *
+ */
+export function createUser<Config extends Alova2MethodConfig<Record<string, any>> & createUserExtraConfig>(
+  config: Config
+): Alova2Method<ExtractResponded<Config, 'createUser', Record<string, any>>> {
+  const { url, data, mergedConfig } = buildPayload('/api/users', generalDefaultConfig, createUser.name, config);
+  return alovaInstance.Request<ExtractResponded<Config, 'createUser', Record<string, any>>>({
+    ...mergedConfig,
+    url,
+    data,
+    method: 'POST'
+  });
+}
+
+interface resetUserPasswordExtraConfig {
+  pathParams: {
+    /**
+     * User Id
+     * ---
+     */
+
+    user_id: number;
+  };
+  data: ComponentTypes.ResetPasswordRequest;
+}
+/**
+ * ---
+ *
+ * [POST] Reset Password
+ *
+ * **path:** /api/users/{user_id}/reset-password
+ *
+ * ---
+ *
+ * **Path Parameters**
+ * ```ts
+ * type PathParameters = {
+ *   // [title] User Id
+ *   user_id: number
+ * }
+ * ```
+ *
+ * ---
+ *
+ * **RequestBody**
+ * ```ts
+ * type RequestBody = {
+ *   // [title] Initialpassword
+ *   initialPassword: string
+ * }
+ * ```
+ *
+ * ---
+ *
+ * **Response**
+ * ```ts
+ * type Response = Record<string, any>
+ * ```
+ *
+ */
+export function resetUserPassword<
+  Config extends Alova2MethodConfig<Record<string, any>> & resetUserPasswordExtraConfig
+>(config: Config): Alova2Method<ExtractResponded<Config, 'resetUserPassword', Record<string, any>>> {
+  const { url, data, mergedConfig } = buildPayload(
+    '/api/users/{user_id}/reset-password',
+    generalDefaultConfig,
+    resetUserPassword.name,
+    config
+  );
+  return alovaInstance.Request<ExtractResponded<Config, 'resetUserPassword', Record<string, any>>>({
+    ...mergedConfig,
+    url,
+    data,
+    method: 'POST'
+  });
+}
+
 interface getStatusExtraConfig {}
 /**
  * ---
@@ -86,6 +366,12 @@ interface listReportsExtraConfig {
      */
 
     kind?: 'sale' | 'rent' | null;
+    /**
+     * Ownersearch
+     * ---
+     */
+
+    ownerSearch?: string | null;
   };
 }
 /**
@@ -106,6 +392,8 @@ interface listReportsExtraConfig {
  *   pageSize?: number
  *   // [title] Kind
  *   kind?: "sale" | "rent" | null
+ *   // [title] Ownersearch
+ *   ownerSearch?: string | null
  * }
  * ```
  *
@@ -174,6 +462,58 @@ export function getReport<Config extends Alova2MethodConfig<Record<string, any>>
     config
   );
   return alovaInstance.Request<ExtractResponded<Config, 'getReport', Record<string, any>>>({
+    ...mergedConfig,
+    url,
+    data,
+    method: 'GET'
+  });
+}
+
+interface downloadReportExtraConfig {
+  pathParams: {
+    /**
+     * Report Id
+     * ---
+     */
+
+    report_id: number;
+  };
+}
+/**
+ * ---
+ *
+ * [GET] Download Report
+ *
+ * **path:** /api/reports/{report_id}/download
+ *
+ * ---
+ *
+ * **Path Parameters**
+ * ```ts
+ * type PathParameters = {
+ *   // [title] Report Id
+ *   report_id: number
+ * }
+ * ```
+ *
+ * ---
+ *
+ * **Response**
+ * ```ts
+ * type Response = null
+ * ```
+ *
+ */
+export function downloadReport<Config extends Alova2MethodConfig<null> & downloadReportExtraConfig>(
+  config: Config
+): Alova2Method<ExtractResponded<Config, 'downloadReport', null>> {
+  const { url, data, mergedConfig } = buildPayload(
+    '/api/reports/{report_id}/download',
+    generalDefaultConfig,
+    downloadReport.name,
+    config
+  );
+  return alovaInstance.Request<ExtractResponded<Config, 'downloadReport', null>>({
     ...mergedConfig,
     url,
     data,

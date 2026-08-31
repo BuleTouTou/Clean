@@ -14,6 +14,11 @@ BASE_URL = os.getenv("CONTAINER_BASE_URL")
 
 @pytest.mark.skipif(not BASE_URL, reason="设置 CONTAINER_BASE_URL 后执行容器集成测试")
 def test_postgresql_minio_container_flow() -> None:
+    admin_password = os.getenv("CONTAINER_ADMIN_PASSWORD")
+    if not admin_password:
+        pytest.skip("设置 CONTAINER_ADMIN_PASSWORD 后执行容器集成测试")
+    admin_username = os.getenv("CONTAINER_ADMIN_USERNAME", "admin")
+
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = "原始数据"
@@ -24,6 +29,14 @@ def test_postgresql_minio_container_flow() -> None:
     workbook.save(payload)
 
     with httpx.Client(base_url=BASE_URL, timeout=60) as client:
+        response = client.post(
+            "/api/auth/login",
+            json={
+                "username": admin_username,
+                "password": admin_password,
+            },
+        )
+        response.raise_for_status()
         response = client.post("/api/task", json={"kind": "sale"})
         response.raise_for_status()
         task_id = response.json()["taskId"]
@@ -71,7 +84,12 @@ def test_postgresql_minio_container_flow() -> None:
         exported = response.json()
 
         assert exported["ossObjectKey"]
+        expected_prefix = f"housing-cleaner/users/{admin_username}/{task_id}/"
+        assert exported["ossObjectKey"].startswith(expected_prefix)
         assert exported["downloadUrl"].startswith("/api/reports/")
+        report = client.get(exported["downloadUrl"].removesuffix("/download"))
+        report.raise_for_status()
+        assert report.json()["source_object_key"].startswith(expected_prefix)
         download = client.get(exported["downloadUrl"])
         download.raise_for_status()
         result = openpyxl.load_workbook(io.BytesIO(download.content))

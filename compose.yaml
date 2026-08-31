@@ -75,6 +75,11 @@ services:
       MINIO_BUCKET: ${MINIO_BUCKET:-clean}
       MINIO_SECURE: "false"
       WORK_DIR: /tmp/housing-cleaner
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:?set ADMIN_INITIAL_PASSWORD in .env}
+      ADMIN_NAME: ${ADMIN_NAME:-系统管理员}
+      SESSION_DAYS: ${SESSION_DAYS:-7}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
     ports:
       - "${APP_PORT:-8765}:8765"
     tmpfs:
@@ -89,7 +94,7 @@ services:
       migrate:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8765/api/status', timeout=3)"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8765/healthz', timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 12

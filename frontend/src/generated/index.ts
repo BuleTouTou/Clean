@@ -28,7 +28,14 @@ export const alovaInstance = createAlova({
   statesHook: vueHook,
   requestAdapter: fetchAdapter(),
   beforeRequest: method => {},
-  responded: (res, method) => {
+  responded: async (res, method) => {
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 401 && !window.location.pathname.startsWith('/login')) {
+        window.location.assign('/login');
+      }
+      throw new Error(data.error || `请求失败（${res.status}）`);
+    }
     return method.meta?.blob ? res.blob() : res.json();
   }
 });

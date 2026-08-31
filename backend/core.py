@@ -39,6 +39,11 @@ FILES = {
 RULE_VERSION = "1.0.0"
 TASKS: dict[str, dict] = {}
 DOWNLOADS: dict[str, Path] = {}
+
+
+def task_object_prefix(task: dict) -> str:
+    """Keep each user's MinIO/OSS artifacts under a stable account prefix."""
+    return f"housing-cleaner/users/{task['username']}/{task['id']}"
 LOCK = threading.RLock()
 
 SYNONYMS = {
@@ -612,7 +617,7 @@ def build_output(task, clean_only=False):
         artifact_paths = [outpath]
         for artifact_path in artifact_paths:
             if artifact_path.exists():
-                object_key = f"housing-cleaner/{task['id']}/{artifact_path.name}"
+                object_key = f"{task_object_prefix(task)}/{artifact_path.name}"
                 artifacts[artifact_path.name] = storage.upload_file(artifact_path, object_key)
         report["OSS文件"] = artifacts
         output_info = artifacts[outpath.name]
@@ -642,6 +647,7 @@ def build_output(task, clean_only=False):
 
     source_info = task.get("source_artifact") or {}
     report_id = save_report(
+        int(task["user_id"]),
         task["id"],
         kind,
         report,
@@ -652,8 +658,7 @@ def build_output(task, clean_only=False):
         output_url,
         output_object_key,
     )
-    if output_object_key:
-        download_url = f"/api/reports/{report_id}/download"
+    download_url = f"/api/reports/{report_id}/download"
     task["last_export"]={"file":output_file,"downloadId":download_id,"ossUrl":output_url,"downloadUrl":download_url,"ossObjectKey":output_object_key,"artifacts":artifacts,"report":report,"audit":len(audit),"exceptions":exceptions}
     return task["last_export"]
 

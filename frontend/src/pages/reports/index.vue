@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, h, ref } from "vue";
+import { computed, h, ref, watch } from "vue";
 import { useQuery } from "@tanstack/vue-query";
 import {
   NButton,
@@ -17,10 +17,12 @@ import {
   useMessage,
 } from "naive-ui";
 import { api, type BatchKind, type ReportItem } from "../../api";
+import { authState } from "../../auth";
 import { formatBeijingTime } from "../../utils/datetime";
 
 const message = useMessage();
 const search = ref("");
+const ownerSearch = ref("");
 const reportPage = ref(1);
 const reportPageSize = ref(10);
 const reportKind = ref<BatchKind | undefined>();
@@ -33,9 +35,19 @@ const reportQuery = useQuery({
     reportPage.value,
     reportPageSize.value,
     reportKind.value,
+    authState.user?.role === "admin" ? ownerSearch.value.trim() : "",
   ]),
   queryFn: () =>
-    api.reports(reportPage.value, reportPageSize.value, reportKind.value),
+    api.reports(
+      reportPage.value,
+      reportPageSize.value,
+      reportKind.value,
+      authState.user?.role === "admin" ? ownerSearch.value.trim() : undefined,
+    ),
+});
+
+watch(ownerSearch, () => {
+  reportPage.value = 1;
 });
 
 const filteredReports = computed(() => {
@@ -91,6 +103,13 @@ const reportColumns = [
         h("div", { class: "text-xs text-slate-400" }, row.original_name),
       ]),
   },
+  ...(authState.user?.role === "admin"
+    ? [{
+        title: "所属用户",
+        key: "owner",
+        render: (row: ReportItem) => row.owner ? `${row.owner.name}（${row.owner.username}）` : "历史未归属",
+      }]
+    : []),
   {
     title: "类型",
     key: "kind",
@@ -166,6 +185,13 @@ const reportColumns = [
         class="!w-72 shrink-0"
         clearable
         placeholder="搜索任务或文件名"
+      />
+      <n-input
+        v-if="authState.user?.role === 'admin'"
+        v-model:value="ownerSearch"
+        class="!w-64 shrink-0"
+        clearable
+        placeholder="搜索用户账号或姓名"
       />
       <n-select
         :value="reportKind"

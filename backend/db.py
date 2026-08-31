@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import DateTime, Integer, JSON, String, Text, UniqueConstraint, create_engine, func, select
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Text, UniqueConstraint, create_engine, func, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
@@ -33,6 +33,7 @@ class TaskReport(Base):
     __table_args__ = (UniqueConstraint("task_id", name="uq_task_reports_task_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), index=True)
     task_id: Mapped[str] = mapped_column(String(64), nullable=False)
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
     original_name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -64,6 +65,41 @@ class AppSetting(Base):
         nullable=False,
         default=lambda: datetime.now(UTC_TIMEZONE),
         onupdate=lambda: datetime.now(UTC_TIMEZONE),
+    )
+
+
+class User(Base):
+    __tablename__ = "users"
+    __table_args__ = (UniqueConstraint("username", name="uq_users_username"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    username: Mapped[str] = mapped_column(String(100), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    role: Mapped[str] = mapped_column(String(20), nullable=False, default="user")
+    must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC_TIMEZONE)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=lambda: datetime.now(UTC_TIMEZONE),
+        onupdate=lambda: datetime.now(UTC_TIMEZONE),
+    )
+
+
+class UserSession(Base):
+    __tablename__ = "user_sessions"
+    __table_args__ = (UniqueConstraint("token_hash", name="uq_user_sessions_token_hash"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC_TIMEZONE)
     )
 
 
@@ -118,9 +154,11 @@ def _normalize_report(report: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
-def _report_dict(row: TaskReport) -> dict[str, Any]:
+def _report_dict(row: TaskReport, owner: User | None = None) -> dict[str, Any]:
     return {
         "id": row.id,
+        "user_id": row.user_id,
+        "owner": {"id": owner.id, "username": owner.username, "name": owner.name} if owner is not None else None,
         "task_id": row.task_id,
         "kind": row.kind,
         "original_name": row.original_name,
@@ -141,6 +179,7 @@ def _report_dict(row: TaskReport) -> dict[str, Any]:
 
 
 def save_report(
+    user_id: int,
     task_id: str,
     kind: str,
     report: dict[str, Any],
@@ -158,6 +197,7 @@ def save_report(
         if row is None:
             row = TaskReport(task_id=task_id)
             session.add(row)
+        row.user_id = user_id
         row.kind = kind
         row.original_name = str(normalized.get("原始文件名", ""))
         row.entrust_date = normalized.get("委托日期")
@@ -177,28 +217,62 @@ def save_report(
         return row.id
 
 
-def list_reports(page: int = 1, page_size: int = 10, kind: str | None = None) -> dict[str, Any]:
+def list_reports(
+    page: int = 1,
+    page_size: int = 10,
+    kind: str | None = None,
+    owner_user_id: int | None = None,
+    owner_search: str | None = None,
+) -> dict[str, Any]:
     page = max(1, page)
     page_size = min(100, max(1, page_size))
     filters = [TaskReport.kind == kind] if kind in ("sale", "rent") else []
+    if owner_user_id is not None:
+        filters.append(TaskReport.user_id == owner_user_id)
+    keyword = str(owner_search or "").strip()
+    if keyword:
+        escaped = keyword.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        pattern = f"%{escaped}%"
+        filters.append(
+            or_(
+                User.username.ilike(pattern, escape="\\"),
+                User.name.ilike(pattern, escape="\\"),
+            )
+        )
     Session = get_session_factory()
     with Session() as session:
-        total = int(session.scalar(select(func.count()).select_from(TaskReport).where(*filters)) or 0)
-        rows = session.scalars(
-            select(TaskReport)
+        total = int(
+            session.scalar(
+                select(func.count())
+                .select_from(TaskReport)
+                .outerjoin(User, TaskReport.user_id == User.id)
+                .where(*filters)
+            )
+            or 0
+        )
+        rows = session.execute(
+            select(TaskReport, User)
+            .outerjoin(User, TaskReport.user_id == User.id)
             .where(*filters)
             .order_by(TaskReport.completed_at.desc(), TaskReport.id.desc())
             .limit(page_size)
             .offset((page - 1) * page_size)
         ).all()
-        return {"items": [_report_dict(row) for row in rows], "total": total, "page": page, "pageSize": page_size}
+        return {"items": [_report_dict(row, owner) for row, owner in rows], "total": total, "page": page, "pageSize": page_size}
 
 
-def get_report(report_id: int) -> dict[str, Any] | None:
+def get_report(report_id: int, owner_user_id: int | None = None) -> dict[str, Any] | None:
     Session = get_session_factory()
     with Session() as session:
-        row = session.get(TaskReport, report_id)
-        return _report_dict(row) if row is not None else None
+        statement = (
+            select(TaskReport, User)
+            .outerjoin(User, TaskReport.user_id == User.id)
+            .where(TaskReport.id == report_id)
+        )
+        if owner_user_id is not None:
+            statement = statement.where(TaskReport.user_id == owner_user_id)
+        result = session.execute(statement).one_or_none()
+        return _report_dict(result[0], result[1]) if result is not None else None
 
 
 def load_setting(key: str, default: dict[str, Any]) -> dict[str, Any]:

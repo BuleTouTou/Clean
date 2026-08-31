@@ -36,6 +36,7 @@ def main():
     workbook.save(source)
     try:
         with TestClient(app) as client:
+            req(client, "/api/auth/login", {"username": "admin", "password": "test-admin-password"})
             task = req(client, "/api/task", {"kind": "sale"})
             task_id = task["taskId"]
             upload = req(client, "/api/upload", headers={"X-Task-Id": task_id, "X-Filename": "smoke.xlsx"}, raw=source.read_bytes())

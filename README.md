@@ -33,6 +33,7 @@
 7. **审计与异常**：将字段级修改依据和阻断异常详情保存到清洗报告中，供历史记录查看。
 8. **规则快照**：每次导出都会保存本批次实际使用的字段映射、小区匹配和栋座匹配规则，历史报告页面可以直接查看。
 9. **两种导出模式**：导出全部记录，或仅导出没有阻断异常的记录。
+10. **账号与权限**：管理员分配普通用户账号和初始密码；普通用户首次登录必须修改密码，只能查看自己的任务和历史清洗报告，管理员可以查看全部用户和全部报告，并按用户账号或姓名筛选报告。
 
 ## 4. 技术选型与迁移说明
 
@@ -53,6 +54,7 @@
 backend/
 ├── __init__.py       # 包入口
 ├── app.py            # FastAPI 应用、请求模型、API 路由和静态文件挂载
+├── auth.py           # bcrypt 密码、登录会话和用户管理
 ├── core.py           # 文件处理、匹配、清洗和导出核心逻辑
 ├── db.py             # PostgreSQL/SQLAlchemy 数据访问
 ├── migrations/       # Alembic 数据库迁移
@@ -106,11 +108,13 @@ app (Vue + FastAPI) → postgres
 
 ```bash
 cp .env.example .env
-# 修改 .env 中的 PostgreSQL 与 MinIO 密码
+# 修改 .env 中的 PostgreSQL、MinIO 和管理员初始密码
 docker compose up --build -d --wait
 ```
 
 访问地址：应用 `http://localhost:8765`，MinIO 控制台 `http://localhost:9001`，PostgreSQL `localhost:5432`。
+
+首次启动会根据 `.env` 中的 `ADMIN_USERNAME`、`ADMIN_INITIAL_PASSWORD` 和 `ADMIN_NAME` 创建管理员。管理员登录后可在“用户管理”中分配普通用户账号、姓名和初始密码；普通用户首次登录后会被强制进入修改密码页面。管理员已存在时，修改环境变量不会自动重置其密码。
 
 ```bash
 docker compose ps
@@ -203,8 +207,13 @@ uv run --project backend python -m uvicorn backend.app:app --host 0.0.0.0 --port
 | `MINIO_SECRET_KEY` / `MINIO_PASSWORD` | 无 | MinIO Secret Key；兼容旧变量名 `MINIO_PASSWORD` |
 | `MINIO_BUCKET` | 无 | 存放清洗文件的 Bucket，必须由部署环境提供 |
 | `MINIO_PUBLIC_ENDPOINT` | 同 `MINIO_ENDPOINT` | 数据库中 OSS URL 使用的可访问地址 |
+| `ADMIN_USERNAME` | `admin` | 首次启动时创建的管理员账号 |
+| `ADMIN_INITIAL_PASSWORD` | 无 | 首次启动管理员密码，至少 8 位；必须通过 `.env` 或部署平台 Secret 提供 |
+| `ADMIN_NAME` | `系统管理员` | 管理员姓名 |
+| `SESSION_DAYS` | `7` | 登录会话有效天数，范围 1–30 天 |
+| `SESSION_COOKIE_SECURE` | `false` | HTTPS 生产环境必须设为 `true`，使登录 Cookie 仅通过 HTTPS 传输 |
 
-开发环境可以复制根目录的 `.env.example` 为 `.env`，再填写 PostgreSQL 和 MinIO 凭据。`.env` 已加入 Git 忽略规则，正式环境应通过部署平台的 Secret 注入配置。当前项目约定使用 Bucket `clean`；清洗报告、异常详情、审计记录和规则快照保存为 PostgreSQL `JSONB`。浏览器下载统一经过 FastAPI 转发，不暴露容器内部的 `http://minio:9000` 地址。
+开发环境可以复制根目录的 `.env.example` 为 `.env`，再填写 PostgreSQL、MinIO 和管理员凭据。`.env` 已加入 Git 忽略规则，正式环境应通过部署平台的 Secret 注入配置，并启用 HTTPS 与 `SESSION_COOKIE_SECURE=true`。用户密码使用 bcrypt 哈希保存，登录令牌只以 SHA-256 摘要入库并通过 HttpOnly Cookie 传输，接口不会返回密码或密码哈希。当前项目约定使用 Bucket `clean`；清洗报告、异常详情、审计记录和规则快照保存为 PostgreSQL `JSONB`。浏览器下载统一经过 FastAPI 转发，不暴露容器内部的 `http://minio:9000` 地址。
 
 数据库中的任务开始时间、完成时间和审计操作时间统一保存为带 `Z` 后缀的 UTC ISO 8601 字符串（例如 `2026-08-30T16:18:30Z`）。前端展示时通过浏览器 `Intl.DateTimeFormat` 转换为北京时间（`Asia/Shanghai`），不依赖访问者电脑的本地时区。
 
@@ -214,6 +223,7 @@ uv run --project backend python -m uvicorn backend.app:app --host 0.0.0.0 --port
 .
 ├── backend/                  # FastAPI 后端包
 │   ├── app.py                # ASGI 应用和 API 路由
+│   ├── auth.py               # 用户、密码与会话认证
 │   ├── core.py               # 文件处理、匹配、清洗和导出核心逻辑
 │   ├── db.py                 # SQLAlchemy 数据访问和模型
 │   ├── migrations/           # Alembic PostgreSQL 迁移
@@ -255,7 +265,7 @@ uv run --project backend python -m uvicorn backend.app:app --host 0.0.0.0 --port
 
 ## 12. 输出文件规范
 
-MinIO 启用时，每次任务的文件会上传到 `clean/housing-cleaner/<任务 ID>/`；MinIO 未启用时才会在 `WORK_DIR/outputs/<任务 ID>/` 下生成回退文件：
+MinIO 启用时，每次任务的文件会上传到 `clean/housing-cleaner/users/<用户账号>/<任务 ID>/`，不同用户拥有独立的对象目录；MinIO 未启用时才会在 `WORK_DIR/outputs/<任务 ID>/` 下生成回退文件：
 
 - `售房清洗导入_时间戳.xlsx` 或 `租房清洗导入_时间戳.xlsx`：最终导入文件。
 - `清洗报告.json`：MinIO 未启用的兼容模式下生成；容器模式下报告内容直接保存到 PostgreSQL `JSONB`，其中包含异常详情、字段级审计记录和清洗规则快照。

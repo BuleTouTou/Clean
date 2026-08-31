@@ -18,6 +18,40 @@
  *
  * **Do not edit the file manually.**
  */
+export interface ChangePasswordRequest {
+  /**
+   * Currentpassword
+   * ---
+   */
+
+  currentPassword: string;
+  /**
+   * Newpassword
+   * ---
+   */
+
+  newPassword: string;
+}
+export interface CreateUserRequest {
+  /**
+   * Username
+   * ---
+   */
+
+  username: string;
+  /**
+   * Name
+   * ---
+   */
+
+  name: string;
+  /**
+   * Initialpassword
+   * ---
+   */
+
+  initialPassword: string;
+}
 export interface ExportRequest {
   /**
    * Taskid
@@ -32,6 +66,20 @@ export interface ExportRequest {
 
   cleanOnly?: boolean;
 }
+export interface LoginRequest {
+  /**
+   * Username
+   * ---
+   */
+
+  username: string;
+  /**
+   * Password
+   * ---
+   */
+
+  password: string;
+}
 export interface MappingRequest {
   /**
    * Taskid
@@ -45,6 +93,14 @@ export interface MappingRequest {
    */
 
   mapping: Record<string, string | string[]>;
+}
+export interface ResetPasswordRequest {
+  /**
+   * Initialpassword
+   * ---
+   */
+
+  initialPassword: string;
 }
 export interface ReviewRequest {
   /**

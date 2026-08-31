@@ -1,4 +1,5 @@
 import json
+import os
 import re
 import sys
 from datetime import date
@@ -29,6 +30,7 @@ def main(path: str):
     source = Path(path)
     assert source.exists(), f"输入文件不存在：{source}"
     with TestClient(app) as client:
+        req(client, "/api/auth/login", {"username": "admin", "password": os.environ["ADMIN_INITIAL_PASSWORD"]})
         task = req(client, "/api/task", {"kind": "sale"})
         task_id = task["taskId"]
         upload = req(client, "/api/upload", headers={"X-Task-Id": task_id, "X-Filename": quote(source.name)}, raw=source.read_bytes())
@@ -88,8 +90,6 @@ def main(path: str):
 
 def test_real_data_file():
     """通过 REAL_DATA_FILE 环境变量启用真实文件验收。"""
-    import os
-
     configured = os.environ.get("REAL_DATA_FILE")
     if not configured:
         import pytest

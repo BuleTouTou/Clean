@@ -9,6 +9,8 @@ import pytest
 TEST_ROOT = Path(tempfile.gettempdir()) / f"housing-cleaner-tests-{os.getpid()}"
 os.environ["DATABASE_URL"] = f"sqlite:///{TEST_ROOT / 'test.sqlite3'}"
 os.environ["WORK_DIR"] = str(TEST_ROOT / "work")
+os.environ["ADMIN_USERNAME"] = "admin"
+os.environ["ADMIN_INITIAL_PASSWORD"] = "test-admin-password"
 
 
 @pytest.fixture(scope="session", autouse=True)

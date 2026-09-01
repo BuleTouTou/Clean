@@ -4,6 +4,7 @@ import csv, hashlib, io, json, os, re, shutil, subprocess, threading, time, unic
 from copy import copy
 from datetime import date, datetime, timezone
 from difflib import SequenceMatcher
+from functools import lru_cache
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -238,14 +239,23 @@ def mapping_suggestions(headers, target, rows, source_key):
         out.append({"source":h,"target":suggestion,"confidence":round(confidence,2),"reason":reason,"samples":samples})
     return out
 
-def load_estates():
-    wb=openpyxl.load_workbook(RESOURCES/FILES["estate"],read_only=True,data_only=True); ws=wb[wb.sheetnames[0]]
+def resource_signature(path):
+    stat=path.stat()
+    return str(path.resolve()),stat.st_mtime_ns,stat.st_size
+
+@lru_cache(maxsize=4)
+def _load_estate_rows(signature):
+    path=Path(signature[0]); wb=openpyxl.load_workbook(path,read_only=True,data_only=True); ws=wb[wb.sheetnames[0]]
     rows=ws.iter_rows(values_only=True); heads=[str(x or "").strip() for x in next(rows)]; ix={h:i for i,h in enumerate(heads)}
     result=[]
     for r in rows:
         if not r[ix["楼盘"]]: continue
-        result.append({k:("" if r[ix[k]] is None else str(r[ix[k]]).strip()) for k in ("楼盘","别名","行政区","商圈","期名")})
-    return result
+        result.append(tuple("" if r[ix[k]] is None else str(r[ix[k]]).strip() for k in ("楼盘","别名","行政区","商圈","期名")))
+    return tuple(result)
+
+def load_estates():
+    rows=_load_estate_rows(resource_signature(RESOURCES/FILES["estate"]))
+    return [dict(zip(("楼盘","别名","行政区","商圈","期名"),row)) for row in rows]
 
 def estate_output_name(estate):
     """模板小区名使用楼盘+期名；楼盘名中的（一区）/（一期）保留文字但去掉括号。"""
@@ -254,6 +264,16 @@ def estate_output_name(estate):
     base=re.sub(r"[（(]\s*((?:第?[一二三四五六七八九十百零〇两\d]+期)|(?:[一二三四五六七八九十百零〇两\d]+区))\s*[）)]",r"\1",base)
     if not phase or norm(base,True).endswith(norm(phase,True)): return base
     return base+phase
+
+def estate_candidate_id(estate):
+    identity="\x1f".join(norm(estate.get(key,""),True) for key in ("楼盘","期名","行政区","商圈"))
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:20]
+
+def prepare_estate(estate):
+    prepared={**estate}
+    prepared["match_name"]=estate_output_name(prepared)
+    prepared["candidate_id"]=estate_candidate_id(prepared)
+    return prepared
 
 def estate_match_names(estate):
     names={str(estate.get("楼盘") or "").strip(),estate_output_name(estate)}
@@ -293,9 +313,62 @@ def community_decision_key(raw_community, raw_building=""):
 def unique_estates(items):
     unique={}
     for estate in items:
-        key=(estate_output_name(estate),estate.get("行政区",""),estate.get("商圈",""))
-        unique.setdefault(key,estate)
+        prepared=estate if estate.get("candidate_id") else prepare_estate(estate)
+        unique.setdefault(prepared["candidate_id"],prepared)
     return list(unique.values())
+
+def rule_candidate_value(value):
+    if isinstance(value,dict): return value.get("candidateId") or value.get("outputName") or ""
+    return str(value or "")
+
+def resolve_estate_candidate(candidates, choice):
+    value=rule_candidate_value(choice)
+    if not value: return None
+    direct=[candidate for candidate in candidates if candidate.get("candidate_id")==value or candidate.get("match_name")==value]
+    if len(direct)==1: return direct[0]
+    legacy=[candidate for candidate in candidates if candidate.get("楼盘")==value]
+    return legacy[0] if len(legacy)==1 else None
+
+def candidate_for_building(candidate, raw_building, catalog):
+    compatibility=estate_building_compatibility(candidate,raw_building,catalog)
+    return {**candidate,"buildingState":compatibility["state"],"matchedBuildings":compatibility["matchedBuildings"],"buildingPhases":compatibility["phases"]}
+
+def group_estate_reviews(reviews):
+    groups={}
+    for review in reviews:
+        group_key=estate_norm(review.get("raw",""),True) or "__empty_community__"
+        group=groups.setdefault(group_key,{"key":group_key,"raw":review.get("raw","") or "","rawVariants":set(),"rows":set(),"buildings":[],"candidateMap":{}})
+        group["rawVariants"].add(review.get("raw","") or "")
+        group["rows"].update(review.get("rows",[]))
+        child={"key":review["key"],"rawBuilding":review.get("rawBuilding","") or "","rows":review.get("rows",[]),"candidateIds":[candidate["candidate_id"] for candidate in review.get("candidates",[])]}
+        group["buildings"].append(child)
+        for candidate in review.get("candidates",[]):
+            summary=group["candidateMap"].setdefault(candidate["candidate_id"],{
+                "id":candidate["candidate_id"],"outputName":candidate["match_name"],"estate":candidate["楼盘"],"phase":candidate.get("期名",""),"district":candidate.get("行政区",""),"businessArea":candidate.get("商圈",""),"score":candidate.get("score",0),"compatibleBuildingKeys":[],"uniqueBuildingKeys":[],"unknownBuildingKeys":[],
+            })
+            summary["score"]=max(summary["score"],candidate.get("score",0))
+            state=candidate.get("buildingState","unknown")
+            if state in ("unique","compatible"): summary["compatibleBuildingKeys"].append(review["key"])
+            if state=="unique": summary["uniqueBuildingKeys"].append(review["key"])
+            if state=="unknown": summary["unknownBuildingKeys"].append(review["key"])
+    result=[]
+    for group in groups.values():
+        building_keys=[item["key"] for item in group["buildings"]]
+        candidates=[]
+        for candidate in group.pop("candidateMap").values():
+            candidate["coverageCount"]=len(candidate["compatibleBuildingKeys"])
+            candidate["uniqueCoverageCount"]=len(candidate["uniqueBuildingKeys"])
+            candidate["conflictCount"]=candidate["coverageCount"]-candidate["uniqueCoverageCount"]
+            candidate["canApplyAll"]=bool(building_keys) and set(candidate["uniqueBuildingKeys"])==set(building_keys)
+            candidate["canApplyCompatible"]=bool(candidate["compatibleBuildingKeys"])
+            candidates.append(candidate)
+        group["rawVariants"]=sorted(group["rawVariants"])
+        group["rows"]=sorted(group["rows"])
+        group["buildingCount"]=len(group["buildings"])
+        group["unresolvedCount"]=len(group["buildings"])
+        group["candidates"]=sorted(candidates,key=lambda item:(not item["canApplyAll"],-item["coverageCount"],-item["score"],item["outputName"]))
+        result.append(group)
+    return result
 
 def building_courtyard_prefixes(buildings):
     prefixes=set()
@@ -323,7 +396,7 @@ def building_decision_key(estate, raw_building):
     return estate_output_name(estate)+"|"+str(raw_building or "").strip()
 
 def estate_review(task):
-    mapping=task["mapping"]; rows=task["rows"]; estates=load_estates(); unit_index=load_unit_index(); rules=jload(RULES_FILE,{})
+    mapping=task["mapping"]; rows=task["rows"]; estates=[prepare_estate(estate) for estate in load_estates()]; unit_catalog=load_unit_catalog(); unit_index=unit_catalog["by_estate"]; rules=jload(RULES_FILE,{})
     src_by_target={}
     for src,tgts in mapping.items():
         for t in (tgts if isinstance(tgts,list) else [tgts]):
@@ -333,7 +406,6 @@ def estate_review(task):
     if not community_src: return [], [{"type":"小区没有映射字段","count":len(rows)}]
     exact={}; compact={}
     for e in estates:
-        e["match_name"]=estate_output_name(e)
         names=set(estate_match_names(e))
         for prefix in building_courtyard_prefixes(unit_index.get(e["楼盘"],{})):
             names.update(name+prefix for name in estate_match_names(e))
@@ -344,42 +416,59 @@ def estate_review(task):
         raw=" ".join(str(r.get(s) or "").strip() for s in community_src).strip()
         raw_build=" ".join(str(r.get(s) or "").strip() for s in building_src).strip()
         key=community_decision_key(raw,raw_build); hint=phase_hint(raw) or phase_hint(raw_build)
-        group=groups.setdefault(key,{"raw":raw,"hint":hint,"buildings":set(),"rows":[]}); group["rows"].append(r["_row"])
+        group=groups.setdefault(key,{"raw":raw,"rawBuilding":raw_build,"hint":hint,"buildings":set(),"rows":[]}); group["rows"].append(r["_row"])
         if raw_build: group["buildings"].add(raw_build)
     reviews=[]; auto={}
     saved=rules.get("estates",{})
     for key,group in groups.items():
-        raw=group["raw"]; hint=group["hint"]; rownums=group["rows"]; raw_buildings=sorted(group["buildings"])
+        raw=group["raw"]; raw_build=group["rawBuilding"]; hint=group["hint"]; rownums=group["rows"]; raw_buildings=sorted(group["buildings"])
         match_text=raw if not hint or phase_hint(raw) else raw+hint
         found=[]; method=""; conf=0
-        saved_choice=saved.get(key,saved.get(raw,""))
+        saved_exact=key in saved; saved_choice=saved.get(key,saved.get(raw,""))
         if saved_choice:
-            saved_found=unique_estates([e for e in estates if estate_output_name(e)==saved_choice or e["楼盘"]==saved_choice])
-            if len(saved_found)==1: found=saved_found; method="已确认规则"; conf=1
+            saved_candidate=resolve_estate_candidate(estates,saved_choice)
+            if saved_candidate:
+                saved_state=candidate_for_building(saved_candidate,raw_build,unit_catalog)["buildingState"]
+                if saved_exact or not raw_build or saved_state=="unique": found=[saved_candidate]; method="已确认栋座规则" if saved_exact else "已确认规则"; conf=1
         exact_found=unique_estates(exact.get(estate_norm(match_text),[]))
         compact_found=unique_estates(compact.get(estate_norm(match_text,True),[]))
-        if not found and len(exact_found)==1: found=exact_found; method="楼盘加期名精确匹配" if not hint else "结合栋座期名匹配"; conf=1
-        if not found and len(compact_found)==1: found=compact_found; method="去除无意义差异后匹配" if not hint else "结合栋座期名匹配"; conf=.99
+        if not found and len(exact_found)==1:
+            state=candidate_for_building(exact_found[0],raw_build,unit_catalog)["buildingState"]
+            if state!="incompatible": found=exact_found; method="楼盘加期名精确匹配" if not hint else "名称与栋座联合唯一匹配"; conf=1
+        if not found and len(compact_found)==1:
+            state=candidate_for_building(compact_found[0],raw_build,unit_catalog)["buildingState"]
+            if state!="incompatible": found=compact_found; method="去除无意义差异后匹配" if not hint else "名称与栋座联合唯一匹配"; conf=.99
+        name_candidates=exact_found or compact_found
+        if not found and raw_build and name_candidates:
+            unique_by_building=[candidate for candidate in name_candidates if candidate_for_building(candidate,raw_build,unit_catalog)["buildingState"]=="unique"]
+            if len(unique_by_building)==1: found=unique_by_building; method="栋座唯一对应期名"; conf=1
         if found:
             prefix=community_building_prefix(raw,found[0],unit_index)
             auto[key]={"estate":found[0],"method":method,"confidence":conf,"community_building_prefix":prefix}
             continue
+        scored_candidates=[]
+        source_candidates=name_candidates
+        if source_candidates:
+            scored_candidates=[{**candidate,"score":1.0} for candidate in source_candidates]
+        else:
+            for e in estates:
+                names=set(estate_match_names(e))
+                for p in building_courtyard_prefixes(unit_index.get(e["楼盘"],{})):
+                    names.update(name+p for name in estate_match_names(e))
+                score=max(SequenceMatcher(None,estate_norm(match_text,True),estate_norm(name,True)).ratio() for name in names)
+                if score>=.35: scored_candidates.append({**e,"score":round(score,3)})
+            scored_candidates=sorted(scored_candidates,key=lambda candidate:candidate["score"],reverse=True)[:8]
         candidates=[]
-        for e in estates:
-            prefix=community_building_prefix(raw,e,unit_index)
-            names=set(estate_match_names(e))
-            for p in building_courtyard_prefixes(unit_index.get(e["楼盘"],{})):
-                names.update(name+p for name in estate_match_names(e))
-            score=max(SequenceMatcher(None,estate_norm(match_text,True),estate_norm(name,True)).ratio() for name in names)
-            if score>=.35: candidates.append({**e,"score":round(score,3),"community_building_prefix":prefix})
-        candidate_map={}
-        for candidate in candidates:
-            candidate_key=(candidate.get("match_name",estate_output_name(candidate)),candidate.get("行政区",""),candidate.get("商圈",""))
-            if candidate_key not in candidate_map or candidate["score"]>candidate_map[candidate_key]["score"]: candidate_map[candidate_key]=candidate
-        candidates=sorted(candidate_map.values(),key=lambda x:x["score"],reverse=True)[:5]
-        reviews.append({"key":key,"raw":raw,"phaseHint":hint,"buildings":raw_buildings,"rows":rownums,"candidates":candidates,"selected":""})
-    task["estate_auto"]=auto; task["estate_reviews"]=reviews
-    return reviews, []
+        for candidate in unique_estates(scored_candidates):
+            scored=next((item.get("score",0) for item in scored_candidates if item["candidate_id"]==candidate["candidate_id"]),0)
+            prefix=community_building_prefix(raw,candidate,unit_index)
+            candidates.append({**candidate_for_building(candidate,raw_build,unit_catalog),"score":scored,"community_building_prefix":prefix})
+        rank={"unique":0,"compatible":1,"unknown":2,"incompatible":3}
+        candidates=sorted(candidates,key=lambda candidate:(rank.get(candidate["buildingState"],4),-candidate["score"],candidate["match_name"]))
+        reviews.append({"key":key,"raw":raw,"rawBuilding":raw_build,"phaseHint":hint,"buildings":raw_buildings,"rows":rownums,"candidates":candidates,"selected":"","selectionMethod":""})
+    grouped_reviews=group_estate_reviews(reviews)
+    task["estate_auto"]=auto; task["estate_reviews"]=reviews; task["estate_review_groups"]=grouped_reviews
+    return grouped_reviews, []
 
 def stable_grade(seed): return ["A类","B类","C类"][int(hashlib.sha256(seed.encode("utf-8")).hexdigest(),16)%3]
 
@@ -397,27 +486,114 @@ def building_core(v):
     numbers=re.findall(r"\d+",s)
     return str(int(numbers[-1])) if numbers else ""
 
-def load_unit_index():
-    wb=openpyxl.load_workbook(RESOURCES/FILES["unit"],read_only=True,data_only=True); ws=wb[wb.sheetnames[0]]; rows=ws.iter_rows(values_only=True)
-    heads=[str(x or "").strip() for x in next(rows)]; ix={h:i for i,h in enumerate(heads)}; index={}
-    for r in rows:
-        estate=str(r[ix["楼盘"]] or "").strip(); building=str(r[ix["座栋"]] or "").strip(); unit=str(r[ix["单元"]] or "").strip()
-        if estate and building: index.setdefault(estate,{}).setdefault(building,set()).add(unit)
-    return index
+def matching_buildings(raw_building, buildings):
+    raw=str(raw_building or "").strip()
+    if not raw: return []
+    exact=[building for building in buildings if norm(building)==norm(raw)]
+    if exact: return exact
+    raw_core=building_core(raw)
+    return [building for building in buildings if raw_core and building_core(building)==raw_core]
 
-def confirmed_estates(task, selected=None):
-    selected=selected or {}
+@lru_cache(maxsize=4)
+def _load_unit_catalog(signature):
+    path=Path(signature[0]); wb=openpyxl.load_workbook(path,read_only=True,data_only=True); ws=wb[wb.sheetnames[0]]; rows=ws.iter_rows(values_only=True)
+    heads=[str(x or "").strip() for x in next(rows)]; ix={h:i for i,h in enumerate(heads)}
+    by_estate_norm={}; by_estate_phase={}; phases_by_estate={}; phase_labels={}; estate_labels={}
+    for r in rows:
+        estate=str(r[ix["楼盘"]] or "").strip(); phase=str(r[ix.get("期名")] or "").strip() if "期名" in ix else ""; building=str(r[ix["座栋"]] or "").strip(); unit=str(r[ix["单元"]] or "").strip()
+        if not estate or not building: continue
+        estate_key=estate_norm(estate,True); phase_key=estate_norm(phase,True)
+        estate_labels.setdefault(estate_key,estate)
+        by_estate_norm.setdefault(estate_key,{}).setdefault(building,set()).add(unit)
+        by_estate_phase.setdefault((estate_key,phase_key),{}).setdefault(building,set()).add(unit)
+        phases_by_estate.setdefault(estate_key,{}).setdefault(phase_key,set()).add(building)
+        if phase_key: phase_labels.setdefault(estate_key,{})[phase_key]=phase
+    by_estate={label:by_estate_norm[estate_key] for estate_key,label in estate_labels.items()}
+    return {"by_estate":by_estate,"by_estate_norm":by_estate_norm,"by_estate_phase":by_estate_phase,"phases_by_estate":phases_by_estate,"phase_labels":phase_labels}
+
+def load_unit_catalog():
+    return _load_unit_catalog(resource_signature(RESOURCES/FILES["unit"]))
+
+def load_unit_index():
+    return load_unit_catalog()["by_estate"]
+
+def phase_building_index(estate, catalog=None):
+    catalog=catalog or load_unit_catalog(); estate_key=estate_norm(estate.get("楼盘",""),True); phase_key=estate_norm(estate.get("期名",""),True)
+    phase_index=catalog["by_estate_phase"].get((estate_key,phase_key),{})
+    return phase_index or catalog["by_estate_norm"].get(estate_key,{})
+
+def estate_building_compatibility(estate, raw_building, catalog=None):
+    raw=str(raw_building or "").strip()
+    if not raw: return {"state":"unknown","matchedBuildings":[],"phases":[]}
+    catalog=catalog or load_unit_catalog(); estate_key=estate_norm(estate.get("楼盘",""),True); phase_key=estate_norm(estate.get("期名",""),True)
+    base_buildings=catalog["by_estate_norm"].get(estate_key,{})
+    base_matches=matching_buildings(raw,base_buildings)
+    if not base_matches: return {"state":"incompatible","matchedBuildings":[],"phases":[]}
+    compatible_phases=set()
+    for candidate_phase,buildings in catalog["phases_by_estate"].get(estate_key,{}).items():
+        if candidate_phase and matching_buildings(raw,buildings): compatible_phases.add(candidate_phase)
+    phase_names=[catalog["phase_labels"].get(estate_key,{}).get(item,item) for item in sorted(compatible_phases)]
+    if not phase_key:
+        state="unique" if not compatible_phases else "unknown"
+        return {"state":state,"matchedBuildings":base_matches,"phases":phase_names}
+    phase_buildings=catalog["by_estate_phase"].get((estate_key,phase_key),{})
+    phase_matches=matching_buildings(raw,phase_buildings)
+    if not phase_matches:
+        state="unknown" if not compatible_phases else "incompatible"
+        return {"state":state,"matchedBuildings":base_matches,"phases":phase_names}
+    state="unique" if compatible_phases=={phase_key} else "compatible"
+    return {"state":state,"matchedBuildings":phase_matches,"phases":phase_names}
+
+SELECTION_METHODS={"manual","batch-all","batch-compatible"}
+
+def selection_method_label(value):
+    return {"manual":"人工确认","batch-all":"批量确认全部","batch-compatible":"批量确认兼容栋座"}.get(value,"人工确认")
+
+def apply_estate_selections(task, selected=None, selection_methods=None):
+    selected=selected or {}; selection_methods=selection_methods or {}; reviews=task.get("estate_reviews",[])
+    review_by_key={review["key"]:review for review in reviews}
+    known_aliases=set(review_by_key)|{review.get("raw","") for review in reviews}
+    unknown=[key for key,value in selected.items() if value and key not in known_aliases]
+    if unknown: raise ValueError("存在无效的小区审核项")
+    provisional={}
+    for review in reviews:
+        key=review["key"]; choice=selected.get(key,selected.get(review.get("raw",""),review.get("selected","")))
+        if not choice:
+            provisional[key]=(None,"manual")
+            continue
+        candidate=resolve_estate_candidate(review.get("candidates",[]),choice)
+        if candidate is None: raise ValueError(f"小区审核候选无效：{review.get('raw','')} {review.get('rawBuilding','')}")
+        method=selection_methods.get(key,selection_methods.get(review.get("raw",""),"manual"))
+        if method not in SELECTION_METHODS: raise ValueError("小区审核确认方式无效")
+        if method=="batch-compatible" and candidate.get("buildingState") not in ("unique","compatible"):
+            raise ValueError("批量操作包含不兼容栋座")
+        provisional[key]=(candidate,method)
+    for group in task.get("estate_review_groups",[]):
+        summaries={candidate["id"]:candidate for candidate in group.get("candidates",[])}
+        for key in [building["key"] for building in group.get("buildings",[])]:
+            candidate,method=provisional.get(key,(None,"manual"))
+            if candidate is None or method!="batch-all": continue
+            summary=summaries.get(candidate["candidate_id"])
+            if summary is None or not summary.get("canApplyAll"): raise ValueError("该候选不满足一键匹配全部的安全条件")
+            expected={building["key"] for building in group.get("buildings",[])}
+            selected_all={item_key for item_key,(item_candidate,item_method) in provisional.items() if item_candidate and item_candidate["candidate_id"]==candidate["candidate_id"] and item_method=="batch-all"}
+            if not expected.issubset(selected_all): raise ValueError("一键匹配全部必须覆盖该小区的所有栋座")
+    for review in reviews:
+        candidate,method=provisional[review["key"]]
+        review["selected"]=candidate["candidate_id"] if candidate else ""
+        review["selectionMethod"]=method if candidate else ""
+
+def confirmed_estates(task, selected=None, selection_methods=None):
+    if selected is not None: apply_estate_selections(task,selected,selection_methods)
     decisions=dict(task.get("estate_auto",{}))
     for rv in task.get("estate_reviews",[]):
-        choice=selected.get(rv.get("key",rv["raw"]),selected.get(rv["raw"],rv.get("selected","")))
-        if choice:
-            e=next((c for c in rv["candidates"] if c.get("match_name",estate_output_name(c))==choice or c["楼盘"]==choice),None)
-            if e: decisions[rv.get("key",rv["raw"])]= {"estate":e,"method":"人工确认","confidence":1,"community_building_prefix":e.get("community_building_prefix","")}
+        candidate=resolve_estate_candidate(rv.get("candidates",[]),rv.get("selected",""))
+        if candidate:
+            decisions[rv.get("key",rv["raw"])]= {"estate":candidate,"method":selection_method_label(rv.get("selectionMethod","manual")),"confidence":1,"community_building_prefix":candidate.get("community_building_prefix","")}
     return decisions
 
-def building_review(task, estate_selected):
-    for rv in task.get("estate_reviews",[]): rv["selected"]=estate_selected.get(rv.get("key",rv["raw"]),estate_selected.get(rv["raw"],""))
-    decisions=confirmed_estates(task,estate_selected); index=load_unit_index(); src_by_target={}
+def building_review(task, estate_selected, selection_methods=None):
+    decisions=confirmed_estates(task,estate_selected,selection_methods); catalog=load_unit_catalog(); src_by_target={}
     for src,tgts in task["mapping"].items():
         for t in (tgts if isinstance(tgts,list) else [tgts]):
             if t and t!="__ignore__": src_by_target.setdefault(t,[]).append(src)
@@ -426,12 +602,12 @@ def building_review(task, estate_selected):
         raw_build=" ".join(str(row.get(s) or "").strip() for s in building_sources).strip()
         raw_comm=" ".join(str(row.get(s) or "").strip() for s in community_sources).strip(); decision=decisions.get(community_decision_key(raw_comm,raw_build),decisions.get(raw_comm))
         if decision and raw_build:
-            estate_info=decision["estate"]; estate=estate_info["楼盘"]; display=estate_output_name(estate_info); raw_build=merge_building_prefix(decision.get("community_building_prefix"),raw_build); groups.setdefault((estate,display,raw_build),[]).append(row["_row"])
+            estate_info=decision["estate"]; estate=estate_info["楼盘"]; display=estate_output_name(estate_info); raw_build=merge_building_prefix(decision.get("community_building_prefix"),raw_build); groups.setdefault((estate,display,estate_info.get("期名",""),raw_build),[]).append(row["_row"])
         elif decision and decision.get("community_building_prefix"):
-            estate_info=decision["estate"]; estate=estate_info["楼盘"]; display=estate_output_name(estate_info); raw_build=decision["community_building_prefix"]; groups.setdefault((estate,display,raw_build),[]).append(row["_row"])
+            estate_info=decision["estate"]; estate=estate_info["楼盘"]; display=estate_output_name(estate_info); raw_build=decision["community_building_prefix"]; groups.setdefault((estate,display,estate_info.get("期名",""),raw_build),[]).append(row["_row"])
     reviews=[]
-    for (estate,display,raw),rownums in groups.items():
-        buildings=list(index.get(estate,{})); exact=[b for b in buildings if norm(b)==norm(raw)]; core=[b for b in buildings if building_core(b) and building_core(b)==building_core(raw)]
+    for (estate,display,phase,raw),rownums in groups.items():
+        buildings=list(phase_building_index({"楼盘":estate,"期名":phase},catalog)); exact=[b for b in buildings if norm(b)==norm(raw)]; core=[b for b in buildings if building_core(b) and building_core(b)==building_core(raw)]
         candidates=exact or core
         if len(candidates)==1: continue
         if not candidates:
@@ -444,7 +620,8 @@ def save_rules(task):
     rules=jload(RULES_FILE,{"mappings":{},"estates":{},"buildings":{},"units":{}})
     rules.setdefault("mappings",{})[task["source_key"]]=task["mapping"]
     for x in task.get("estate_reviews",[]):
-        if x.get("selected"): rules.setdefault("estates",{})[x.get("key",x["raw"])]=x["selected"]
+        candidate=resolve_estate_candidate(x.get("candidates",[]),x.get("selected",""))
+        if candidate: rules.setdefault("estates",{})[x.get("key",x["raw"])]= {"candidateId":candidate["candidate_id"],"outputName":candidate["match_name"],"selectionMethod":x.get("selectionMethod","manual")}
     for x in task.get("building_reviews",[]):
         if x.get("selected"): rules.setdefault("buildings",{})[x["key"]]=x["selected"]
     jsave(RULES_FILE,rules)
@@ -462,14 +639,18 @@ def rule_snapshot(task):
             "是否人工确认": decision.get("method") == "人工确认",
         })
     for review in task.get("estate_reviews", []):
-        selected=review.get("selected", "")
-        if selected:
+        candidate=resolve_estate_candidate(review.get("candidates",[]),review.get("selected",""))
+        if candidate:
             estate_rules.append({
                 "原始键": review.get("key", review.get("raw", "")),
-                "标准小区": selected,
-                "匹配方式": "人工确认",
+                "原始小区": review.get("raw", ""),
+                "原始栋座": review.get("rawBuilding", ""),
+                "标准小区": candidate["match_name"],
+                "候选ID": candidate["candidate_id"],
+                "匹配方式": selection_method_label(review.get("selectionMethod","manual")),
                 "置信度": 1,
                 "是否人工确认": True,
+                "影响行数": len(review.get("rows",[])),
             })
     building_rules=[
         {
@@ -507,7 +688,7 @@ def build_output(task, clean_only=False):
             if t and t!="__ignore__": src_by_target.setdefault(t,[]).append(s)
     decisions=confirmed_estates(task)
     building_manual={x["key"]:x.get("selected","") for x in task.get("building_reviews",[]) if x.get("selected")}
-    audit=[]; exceptions=[]; output=[]; now=utc_now_iso(); unit_index=load_unit_index()
+    audit=[]; exceptions=[]; output=[]; now=utc_now_iso(); unit_catalog=load_unit_catalog()
     community_sources=src_by_target.get("小区",[])
     for source in task["rows"]:
         record={h:"" for h in headers}
@@ -534,7 +715,7 @@ def build_output(task, clean_only=False):
                 if field in record and record[field]!=final_value:
                     audit.append({"原始行号":source["_row"],"房源编号":record.get("房源编号",""),"字段名称":field,"原始值":record[field],"最终值":final_value,"使用的规则":decision["method"],"字典来源":FILES["estate"],"匹配依据":raw_comm,"置信度":decision["confidence"],"是否人工确认":decision["method"]=="人工确认","操作时间":now,"规则版本":RULE_VERSION})
                     record[field]=final_value
-            buildings=unit_index.get(e["楼盘"],{}); original_build=str(record.get("栋幢") or "").strip(); raw_build=merge_building_prefix(decision.get("community_building_prefix"),original_build); chosen_build=""
+            buildings=phase_building_index(e,unit_catalog); original_build=str(record.get("栋幢") or "").strip(); raw_build=merge_building_prefix(decision.get("community_building_prefix"),original_build); chosen_build=""
             if raw_build!=original_build:
                 audit.append({"原始行号":source["_row"],"房源编号":record.get("房源编号",""),"字段名称":"栋幢","原始值":original_build,"最终值":raw_build,"使用的规则":"从小区名拆分几号院","字典来源":FILES["unit"],"匹配依据":raw_comm,"置信度":1,"是否人工确认":False,"操作时间":now,"规则版本":RULE_VERSION})
                 record["栋幢"]=raw_build

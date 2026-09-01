@@ -694,6 +694,8 @@ interface reviewEstateExtraConfig {
  *   taskId: string
  *   // [title] Selected
  *   selected?: Record<string, string>
+ *   // [title] Selectionmethods
+ *   selectionMethods?: Record<string, "manual" | "batch-all" | "batch-compatible">
  *   // [title] Entrustdate
  *   entrustDate?: string | null
  *   // [title] Persistrules
@@ -740,6 +742,8 @@ interface reviewBuildingExtraConfig {
  *   taskId: string
  *   // [title] Selected
  *   selected?: Record<string, string>
+ *   // [title] Selectionmethods
+ *   selectionMethods?: Record<string, "manual" | "batch-all" | "batch-compatible">
  *   // [title] Entrustdate
  *   entrustDate?: string | null
  *   // [title] Persistrules
@@ -791,6 +795,8 @@ interface confirmBuildingExtraConfig {
  *   taskId: string
  *   // [title] Selected
  *   selected?: Record<string, string>
+ *   // [title] Selectionmethods
+ *   selectionMethods?: Record<string, "manual" | "batch-all" | "batch-compatible">
  *   // [title] Entrustdate
  *   entrustDate?: string | null
  *   // [title] Persistrules

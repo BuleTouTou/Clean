@@ -16,11 +16,5 @@ export default defineConfig(({ command }) => ({
   build: {
     outDir: "dist",
     emptyOutDir: true,
-    rollupOptions: {
-      output: {
-        entryFileNames: "app.js",
-        assetFileNames: "[name][extname]",
-      },
-    },
   },
 }));

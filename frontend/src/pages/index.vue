@@ -1,11 +1,12 @@
 <script setup lang="ts">
-// @ts-nocheck
 import { ref } from "vue";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/vue-query";
 import {
   NAlert,
   NButton,
   NCard,
+  NCollapse,
+  NCollapseItem,
   NDatePicker,
   NRadio,
   NRadioGroup,
@@ -16,7 +17,17 @@ import {
   NTag,
   useMessage,
 } from "naive-ui";
-import { api, type BatchKind, type SheetInfo } from "../api";
+import {
+  api,
+  type BatchKind,
+  type BuildingReviewItem,
+  type EstateReviewBuilding,
+  type EstateReviewCandidate,
+  type EstateReviewGroup,
+  type EstateSelectionMethod,
+  type ExportResponse,
+  type SheetInfo,
+} from "../api";
 
 const message = useMessage();
 const queryClient = useQueryClient();
@@ -27,14 +38,16 @@ const busy = ref(false);
 const file = ref<File | null>(null);
 const sheets = ref<SheetInfo[]>([]);
 const targets = ref<string[]>([]);
-const suggestions = ref<any[]>([]);
+const suggestions = ref<Awaited<ReturnType<typeof api.selectSheet>>["suggestions"]>([]);
 const mapping = ref<Record<string, string>>({});
-const estateReviews = ref<any[]>([]);
+const estateReviews = ref<EstateReviewGroup[]>([]);
 const estateSelected = ref<Record<string, string>>({});
-const buildingReviews = ref<any[]>([]);
+const estateSelectionMethods = ref<Record<string, EstateSelectionMethod>>({});
+const buildingReviews = ref<BuildingReviewItem[]>([]);
 const buildingSelected = ref<Record<string, string>>({});
 const entrustDate = ref(Date.now());
-const exportResult = ref<any>(null);
+const exportResult = ref<ExportResponse | null>(null);
+const UNMATCHED_ESTATE = "__unmatched_estate__";
 
 useQuery({
   queryKey: ["status"],
@@ -46,7 +59,7 @@ const createTaskMutation = useMutation({ mutationFn: (value: BatchKind) => api.c
 const uploadMutation = useMutation({ mutationFn: ({ id, source }: { id: string; source: File }) => api.upload(id, source) });
 const selectSheetMutation = useMutation({ mutationFn: ({ id, sheet }: { id: string; sheet: SheetInfo }) => api.selectSheet(id, sheet) });
 const mappingMutation = useMutation({ mutationFn: ({ id, value }: { id: string; value: Record<string, string> }) => api.mapping(id, value) });
-const buildingReviewMutation = useMutation({ mutationFn: ({ id, value }: { id: string; value: Record<string, string> }) => api.buildingReview(id, value) });
+const buildingReviewMutation = useMutation({ mutationFn: ({ id, value, methods }: { id: string; value: Record<string, string>; methods: Record<string, EstateSelectionMethod> }) => api.buildingReview(id, value, methods) });
 const buildingConfirmMutation = useMutation({ mutationFn: ({ id, value, date }: { id: string; value: Record<string, string>; date: string }) => api.buildingConfirm(id, value, date) });
 const exportMutation = useMutation({ mutationFn: ({ id, cleanOnly }: { id: string; cleanOnly: boolean }) => api.export(id, cleanOnly) });
 
@@ -59,9 +72,14 @@ function resetTask() {
   mapping.value = {};
   estateReviews.value = [];
   estateSelected.value = {};
+  estateSelectionMethods.value = {};
   buildingReviews.value = [];
   buildingSelected.value = {};
   exportResult.value = null;
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "操作失败，请稍后重试";
 }
 
 function handleFileChange(event: Event) {
@@ -78,8 +96,8 @@ async function createTask() {
     taskId.value = result.taskId;
     step.value = 2;
     message.success("清洗任务已创建");
-  } catch (error: any) {
-    message.error(error.message);
+  } catch (error: unknown) {
+    message.error(errorMessage(error));
   } finally {
     busy.value = false;
   }
@@ -92,8 +110,8 @@ async function upload() {
     const result = await uploadMutation.mutateAsync({ id: taskId.value, source: file.value });
     sheets.value = result.sheets;
     message.success("文件识别完成");
-  } catch (error: any) {
-    message.error(error.message);
+  } catch (error: unknown) {
+    message.error(errorMessage(error));
   } finally {
     busy.value = false;
   }
@@ -105,10 +123,10 @@ async function selectSheet(sheet: SheetInfo) {
     const result = await selectSheetMutation.mutateAsync({ id: taskId.value, sheet });
     targets.value = result.targets;
     suggestions.value = result.suggestions;
-    mapping.value = Object.fromEntries(result.suggestions.map((item: any) => [item.source, item.target || "__ignore__"]));
+    mapping.value = Object.fromEntries(result.suggestions.map((item) => [item.source, item.target || "__ignore__"]));
     step.value = 3;
-  } catch (error: any) {
-    message.error(error.message);
+  } catch (error: unknown) {
+    message.error(errorMessage(error));
   } finally {
     busy.value = false;
   }
@@ -120,24 +138,112 @@ async function confirmMapping() {
     const result = await mappingMutation.mutateAsync({ id: taskId.value, value: mapping.value });
     estateReviews.value = result.reviews;
     estateSelected.value = {};
+    estateSelectionMethods.value = {};
     step.value = 4;
     message.success(`已自动匹配 ${result.autoCount} 个小区`);
-  } catch (error: any) {
-    message.error(error.message);
+  } catch (error: unknown) {
+    message.error(errorMessage(error));
   } finally {
     busy.value = false;
   }
 }
 
+function groupBuildingSummary(group: EstateReviewGroup): string {
+  const names = group.buildings.map((item) => item.rawBuilding || "栋座为空");
+  if (names.length <= 5) return names.join("、");
+  return `${names.slice(0, 5).join("、")} +${names.length - 5}`;
+}
+
+function candidateOptions(group: EstateReviewGroup, building: EstateReviewBuilding) {
+  return [
+    { label: "暂不匹配", value: UNMATCHED_ESTATE },
+    ...group.candidates
+    .filter((candidate) => building.candidateIds.includes(candidate.id))
+    .map((candidate) => ({
+      label: `${candidate.outputName} · ${candidate.district} · ${candidate.businessArea}`,
+      value: candidate.id,
+    })),
+  ];
+}
+
+function buildingCandidateState(candidate: EstateReviewCandidate, buildingKey: string): "unique" | "compatible" | "unknown" | "incompatible" {
+  if (candidate.uniqueBuildingKeys.includes(buildingKey)) return "unique";
+  if (candidate.compatibleBuildingKeys.includes(buildingKey)) return "compatible";
+  if (candidate.unknownBuildingKeys.includes(buildingKey)) return "unknown";
+  return "incompatible";
+}
+
+function selectedCandidate(group: EstateReviewGroup, building: EstateReviewBuilding): EstateReviewCandidate | undefined {
+  return group.candidates.find((candidate) => candidate.id === estateSelected.value[building.key]);
+}
+
+function buildingStatus(group: EstateReviewGroup, building: EstateReviewBuilding): { label: string; type: "success" | "info" | "warning" | "error" | "default" } {
+  if (estateSelected.value[building.key] === UNMATCHED_ESTATE) return { label: "暂不匹配", type: "default" };
+  const candidate = selectedCandidate(group, building);
+  if (!candidate) return { label: "待确认", type: "warning" };
+  const method = estateSelectionMethods.value[building.key] || "manual";
+  if (method === "batch-all") return { label: "批量完成", type: "success" };
+  if (method === "batch-compatible") return { label: "兼容批量", type: "info" };
+  const state = buildingCandidateState(candidate, building.key);
+  return state === "incompatible"
+    ? { label: "人工覆盖", type: "warning" }
+    : { label: "人工完成", type: "success" };
+}
+
+function updateEstateSelection(key: string, value: string | null) {
+  if (value === null) {
+    delete estateSelected.value[key];
+    delete estateSelectionMethods.value[key];
+    return;
+  }
+  estateSelected.value[key] = value;
+  if (value === UNMATCHED_ESTATE) delete estateSelectionMethods.value[key];
+  else estateSelectionMethods.value[key] = "manual";
+}
+
+function applyEstateCandidate(group: EstateReviewGroup, candidate: EstateReviewCandidate) {
+  const keys = candidate.canApplyAll
+    ? group.buildings.map((item) => item.key)
+    : candidate.compatibleBuildingKeys;
+  const method: EstateSelectionMethod = candidate.canApplyAll ? "batch-all" : "batch-compatible";
+  for (const key of keys) {
+    estateSelected.value[key] = candidate.id;
+    estateSelectionMethods.value[key] = method;
+  }
+  message.success(
+    candidate.canApplyAll
+      ? `已为 ${keys.length} 个栋座一键匹配 ${candidate.outputName}`
+      : `已匹配 ${keys.length} 个兼容栋座，冲突项仍需人工确认`,
+  );
+}
+
+function markEstateGroupUnmatched(group: EstateReviewGroup) {
+  for (const building of group.buildings) {
+    estateSelected.value[building.key] = UNMATCHED_ESTATE;
+    delete estateSelectionMethods.value[building.key];
+  }
+  message.info(`已将 ${group.raw || "该小区"} 的 ${group.buildings.length} 个栋座设为暂不匹配`);
+}
+
+function unresolvedBuildings(): number {
+  return estateReviews.value.reduce(
+    (total, group) => total + group.buildings.filter((item) => !estateSelected.value[item.key]).length,
+    0,
+  );
+}
+
 async function confirmEstate() {
   busy.value = true;
   try {
-    const result = await buildingReviewMutation.mutateAsync({ id: taskId.value, value: estateSelected.value });
+    const selected = Object.fromEntries(
+      Object.entries(estateSelected.value).map(([key, value]) => [key, value === UNMATCHED_ESTATE ? "" : value]),
+    );
+    const result = await buildingReviewMutation.mutateAsync({ id: taskId.value, value: selected, methods: estateSelectionMethods.value });
     buildingReviews.value = result.reviews;
     buildingSelected.value = {};
     step.value = 5;
-  } catch (error: any) {
-    message.error(error.message);
+  } catch (error: unknown) {
+    message.error(errorMessage(error));
   } finally {
     busy.value = false;
   }
@@ -152,8 +258,8 @@ async function confirmBuilding() {
       date: new Date(entrustDate.value).toISOString().slice(0, 10),
     });
     step.value = 6;
-  } catch (error: any) {
-    message.error(error.message);
+  } catch (error: unknown) {
+    message.error(errorMessage(error));
   } finally {
     busy.value = false;
   }
@@ -165,8 +271,8 @@ async function exportFile(cleanOnly: boolean) {
     exportResult.value = await exportMutation.mutateAsync({ id: taskId.value, cleanOnly });
     message.success("文件已生成");
     await queryClient.invalidateQueries({ queryKey: ["reports"] });
-  } catch (error: any) {
-    message.error(error.message);
+  } catch (error: unknown) {
+    message.error(errorMessage(error));
   } finally {
     busy.value = false;
   }
@@ -225,19 +331,92 @@ async function exportFile(cleanOnly: boolean) {
     </n-card>
 
     <n-card v-else-if="step === 4" title="楼盘审核" class="shadow-sm">
-      <n-alert class="mb-4">自动匹配结果会直接应用；以下项目需要人工选择。</n-alert>
-      <div v-for="(review, index) in estateReviews" :key="review.key || index" class="mb-4 rounded-lg border p-4">
-        <div class="mb-3 font-medium">{{ review.raw || "空值" }} <span class="text-sm text-slate-400">影响 {{ review.rows.length }} 行</span></div>
-        <n-radio-group v-model:value="estateSelected[review.key || review.raw]">
-          <n-space vertical>
-            <n-radio v-for="candidate in review.candidates" :key="candidate.match_name || candidate.楼盘" :value="candidate.match_name || candidate.楼盘">
-              {{ candidate.match_name || candidate.楼盘 }} · {{ candidate.行政区 }} · {{ candidate.商圈 }}
-            </n-radio>
-            <n-radio value="">暂不匹配</n-radio>
-          </n-space>
-        </n-radio-group>
-      </div>
-      <div class="mt-6 flex justify-end">
+      <n-alert class="mb-4" :type="estateReviews.length ? 'info' : 'success'">
+        {{ estateReviews.length ? "同一原始小区已合并展示。系统只会对字典可验证的栋座执行批量匹配，冲突项仍需逐项确认。" : "小区与期名已全部自动确认，无需人工复核。" }}
+      </n-alert>
+      <n-collapse v-if="estateReviews.length" :default-expanded-names="estateReviews.map((group) => group.key)">
+        <n-collapse-item v-for="group in estateReviews" :key="group.key" :name="group.key">
+          <template #header>
+            <div class="min-w-0 py-2">
+              <div class="flex flex-wrap items-center gap-2">
+                <span class="font-semibold text-slate-800">{{ group.raw || "小区名称为空" }}</span>
+                <n-tag size="small" :bordered="false">影响 {{ group.rows.length }} 行</n-tag>
+                <n-tag size="small" type="info" :bordered="false">{{ group.buildingCount }} 个栋座</n-tag>
+                <n-tag v-if="group.buildings.some((item) => !estateSelected[item.key])" size="small" type="warning" :bordered="false">
+                  待确认 {{ group.buildings.filter((item) => !estateSelected[item.key]).length }} 项
+                </n-tag>
+              </div>
+              <div class="mt-1 truncate text-xs text-slate-500">栋座：{{ groupBuildingSummary(group) }}</div>
+            </div>
+          </template>
+
+          <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-lg bg-amber-50 px-4 py-3">
+            <span class="text-sm text-amber-800">无法确认标准楼盘时，可暂不匹配并在导出结果中保留阻断异常。</span>
+            <n-button size="small" type="warning" secondary @click="markEstateGroupUnmatched(group)">全部暂不匹配</n-button>
+          </div>
+
+          <div class="mb-4 grid gap-3 xl:grid-cols-2">
+            <div v-for="candidate in group.candidates" :key="candidate.id" class="rounded-lg border border-slate-200 bg-slate-50 p-4">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <div class="font-semibold text-slate-800">{{ candidate.outputName }}</div>
+                  <div class="mt-1 text-xs text-slate-500">{{ candidate.district }} · {{ candidate.businessArea }}</div>
+                </div>
+                <n-button
+                  size="small"
+                  :type="candidate.canApplyAll ? 'primary' : 'default'"
+                  :disabled="!candidate.canApplyAll && !candidate.canApplyCompatible"
+                  @click="applyEstateCandidate(group, candidate)"
+                >
+                  {{ candidate.canApplyAll ? "一键匹配全部" : candidate.canApplyCompatible ? "匹配兼容栋座" : "无可批量栋座" }}
+                </n-button>
+              </div>
+              <div class="mt-3 flex flex-wrap gap-2 text-xs">
+                <n-tag size="small" type="info" :bordered="false">覆盖 {{ candidate.coverageCount }}/{{ group.buildingCount }}</n-tag>
+                <n-tag size="small" type="success" :bordered="false">唯一 {{ candidate.uniqueCoverageCount }}</n-tag>
+                <n-tag v-if="candidate.conflictCount" size="small" type="warning" :bordered="false">冲突 {{ candidate.conflictCount }}</n-tag>
+                <n-tag v-if="candidate.unknownBuildingKeys.length" size="small" :bordered="false">缺少期名依据 {{ candidate.unknownBuildingKeys.length }}</n-tag>
+              </div>
+            </div>
+          </div>
+
+          <div class="overflow-x-auto rounded-lg border border-slate-200">
+            <table class="w-full min-w-[760px] text-left text-sm">
+              <thead>
+                <tr class="bg-slate-50 text-slate-500">
+                  <th class="p-3">原始栋座</th>
+                  <th class="p-3">影响行数</th>
+                  <th class="p-3">标准小区与期名</th>
+                  <th class="p-3">匹配状态</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="building in group.buildings" :key="building.key" class="border-t border-slate-100">
+                  <td class="p-3 font-medium text-slate-800">{{ building.rawBuilding || "栋座为空" }}</td>
+                  <td class="p-3 text-slate-500">{{ building.rows.length }} 行</td>
+                  <td class="p-3">
+                    <n-select
+                      clearable
+                      filterable
+                      :value="estateSelected[building.key] || null"
+                      :options="candidateOptions(group, building)"
+                      placeholder="请选择标准小区"
+                      @update:value="(value) => updateEstateSelection(building.key, value)"
+                    />
+                  </td>
+                  <td class="p-3">
+                    <n-tag :type="buildingStatus(group, building).type" :bordered="false">
+                      {{ buildingStatus(group, building).label }}
+                    </n-tag>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </n-collapse-item>
+      </n-collapse>
+      <div class="mt-6 flex flex-wrap items-center justify-end gap-3">
+        <span v-if="unresolvedBuildings()" class="text-sm text-amber-700">仍有 {{ unresolvedBuildings() }} 个栋座未确认，可暂不匹配并在导出时保留阻断异常。</span>
         <n-button type="primary" @click="confirmEstate">保存确认并检查栋座</n-button>
       </div>
     </n-card>

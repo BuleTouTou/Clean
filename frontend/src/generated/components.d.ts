@@ -116,6 +116,12 @@ export interface ReviewRequest {
 
   selected?: Record<string, string>;
   /**
+   * Selectionmethods
+   * ---
+   */
+
+  selectionMethods?: Record<string, 'manual' | 'batch-all' | 'batch-compatible'>;
+  /**
    * Entrustdate
    * ---
    */

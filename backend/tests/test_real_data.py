@@ -40,7 +40,13 @@ def main(path: str):
         targets = set(selected["targets"])
         mapping = {item["source"]: (item["source"] if item["source"] in targets else (item["target"] or "__ignore__")) for item in selected["suggestions"]}
         estate = req(client, "/api/mapping", {"taskId": task_id, "mapping": mapping})
-        estate_choices = {item["raw"]: (item["candidates"][0].get("match_name") or item["candidates"][0]["楼盘"]) for item in estate["reviews"] if item["candidates"]}
+        estate_choices = {}
+        for group in estate["reviews"]:
+            candidate_ids = {candidate["id"] for candidate in group["candidates"]}
+            for building_item in group["buildings"]:
+                choice = next((candidate_id for candidate_id in building_item["candidateIds"] if candidate_id in candidate_ids), "")
+                if choice:
+                    estate_choices[building_item["key"]] = choice
         building = req(client, "/api/building-review", {"taskId": task_id, "selected": estate_choices})
         building_choices = {item["key"]: item["candidates"][0] for item in building["reviews"] if item["candidates"]}
         req(client, "/api/building-confirm", {"taskId": task_id, "selected": building_choices, "entrustDate": str(date.today()), "persistRules": False})

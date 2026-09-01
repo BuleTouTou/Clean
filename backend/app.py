@@ -51,6 +51,7 @@ class MappingRequest(TaskBody):
 
 class ReviewRequest(TaskBody):
     selected: dict[str, str] = Field(default_factory=dict)
+    selectionMethods: dict[str, Literal["manual", "batch-all", "batch-compatible"]] = Field(default_factory=dict)
     entrustDate: str | None = None
     persistRules: bool = True
 
@@ -357,8 +358,7 @@ def mapping(body: MappingRequest, user: User = Depends(ready_user)) -> dict[str,
 def review(body: ReviewRequest, user: User = Depends(ready_user)) -> dict[str, bool]:
     try:
         task = owned_task(body.taskId, user)
-        for item in task.get("estate_reviews", []):
-            item["selected"] = body.selected.get(item.get("key", item["raw"]), body.selected.get(item["raw"], ""))
+        legacy.apply_estate_selections(task, body.selected, body.selectionMethods)
         task["entrust_date"] = body.entrustDate or task["entrust_date"]
         legacy.save_rules(task)
         return {"ok": True}
@@ -370,7 +370,7 @@ def review(body: ReviewRequest, user: User = Depends(ready_user)) -> dict[str, b
 def building_review(body: ReviewRequest, user: User = Depends(ready_user)) -> dict[str, Any]:
     try:
         task = owned_task(body.taskId, user)
-        return {"reviews": legacy.building_review(task, body.selected)}
+        return {"reviews": legacy.building_review(task, body.selected, body.selectionMethods)}
     except Exception as exc:
         fail(exc)
 

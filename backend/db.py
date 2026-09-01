@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -10,15 +11,43 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, JSON, String, Tex
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
+from .config import load_environment
+
 
 ROOT = Path(__file__).resolve().parent.parent
+load_environment()
 LEGACY_BEIJING_TIMEZONE = timezone(timedelta(hours=8))
 UTC_TIMEZONE = timezone.utc
+SCHEMA_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def get_database_url() -> str:
     """Use PostgreSQL when configured, with SQLite only as a local/test fallback."""
-    return os.getenv("DATABASE_URL", f"sqlite:///{ROOT / 'data' / 'housing_cleaner.sqlite3'}")
+    configured = os.getenv("DATABASE_URL", "").strip()
+    if configured:
+        return configured
+    if os.getenv("APP_ENV", "").strip().lower() in {"prod", "production"}:
+        raise RuntimeError("生产环境必须配置 DATABASE_URL")
+    return f"sqlite:///{ROOT / 'data' / 'housing_cleaner.sqlite3'}"
+
+
+def get_database_schema() -> str | None:
+    schema = os.getenv("DB_SCHEMA", "").strip()
+    if not schema:
+        return None
+    if not SCHEMA_NAME.fullmatch(schema):
+        raise RuntimeError("DB_SCHEMA 只能包含字母、数字和下划线，且不能以数字开头")
+    return schema
+
+
+def get_database_connect_args(url: str | None = None) -> dict[str, Any]:
+    database_url = url or get_database_url()
+    if database_url.startswith("sqlite"):
+        return {"check_same_thread": False}
+    schema = get_database_schema()
+    if schema and database_url.startswith(("postgres://", "postgresql://", "postgresql+")):
+        return {"options": f"-csearch_path={schema},public"}
+    return {}
 
 
 class Base(DeclarativeBase):
@@ -104,18 +133,18 @@ class UserSession(Base):
 
 
 _engine = None
-_engine_url: str | None = None
+_engine_config: tuple[str, str | None] | None = None
 
 
 def get_engine():
-    global _engine, _engine_url
+    global _engine, _engine_config
     url = get_database_url()
-    if _engine is None or _engine_url != url:
+    engine_config = (url, get_database_schema())
+    if _engine is None or _engine_config != engine_config:
         if _engine is not None:
             _engine.dispose()
-        connect_args = {"check_same_thread": False} if url.startswith("sqlite") else {}
-        _engine = create_engine(url, pool_pre_ping=True, connect_args=connect_args)
-        _engine_url = url
+        _engine = create_engine(url, pool_pre_ping=True, connect_args=get_database_connect_args(url))
+        _engine_config = engine_config
     return _engine
 
 

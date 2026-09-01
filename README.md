@@ -2,9 +2,9 @@
 
 ## 1. 项目简介
 
-房源数据清洗工具是一个完全在本机运行的轻量级 Web 应用，用于将业务人员导出的房源数据整理成符合北京房源系统要求的出售或出租 Excel 文件。
+房源数据清洗工具是一个可在本地开发、也可部署到 CloudBase 云托管的 Web 应用，用于将业务人员导出的房源数据整理成符合北京房源系统要求的出售或出租 Excel 文件。
 
-工具以楼盘字典、栋座/单元字典和导入模板为准，提供“自动匹配 + 人工确认 + 可追溯导出”的处理流程。原始数据不会上传到外部服务。
+工具以楼盘字典、栋座/单元字典和导入模板为准，提供“自动匹配 + 人工确认 + 可追溯导出”的处理流程。本地开发使用 MinIO；生产环境的原始文件和导出文件保存到 CloudBase 环境绑定的云存储桶。
 
 ## 2. 目标与边界
 
@@ -39,7 +39,7 @@
 ## 4. 技术选型与迁移说明
 
 - **后端采用 FastAPI**：提供类型化请求校验、自动 OpenAPI 文档和 ASGI 并发模型。生产启动入口为 `backend.app:app`，由 Uvicorn 承载。
-- **持久化采用 PostgreSQL + MinIO**：PostgreSQL 保存历史报告与已确认规则，MinIO 保存原始上传文件和最终 Excel。SQLite 仅保留为直接运行和单元测试的兼容回退，不作为容器部署数据库。
+- **持久化采用 PostgreSQL + 可切换对象存储**：PostgreSQL 保存历史报告与已确认规则；本地开发/测试使用 MinIO，生产环境使用 CloudBase 环境绑定的 COS 存储桶。SQLite 仅保留为直接运行和单元测试的兼容回退，不作为容器部署数据库。
 - **前端采用 TypeScript + Vite**：页面入口和 API 类型定义位于 `frontend/src/`，Vite 将 TypeScript、CSS 和 HTML 构建到 `frontend/dist/`，后端只负责托管构建产物。
 - **样式采用 Tailwind CSS 4**：通过官方 `@tailwindcss/vite` 插件集成，入口文件使用 Tailwind 4 的 `@import "tailwindcss"`，不再使用 Tailwind 3 的 PostCSS 配置或 `@tailwind base/components/utilities` 指令。
 - **前端采用文件路由**：使用 `unplugin-vue-router` 根据 `frontend/src/pages/` 自动生成 Vue Router 路由。页面按文件组织，`App.vue` 只负责全局布局和路由出口。
@@ -107,22 +107,22 @@ app (Vue + FastAPI) → postgres
                   └→ minio
 ```
 
-首次启动：
+首次启动使用开发配置：
 
 ```bash
-cp .env.example .env
-# 修改 .env 中的 PostgreSQL、MinIO 和管理员初始密码
-docker compose up --build -d --wait
+cp .env.development.example .env.development
+# 修改 .env.development 中的本地 PostgreSQL、MinIO 和管理员初始密码
+docker compose --env-file .env.development up --build -d --wait
 ```
 
 访问地址：应用 `http://localhost:8765`，MinIO 控制台 `http://localhost:9001`，PostgreSQL `localhost:5432`。
 
-首次启动会根据 `.env` 中的 `ADMIN_USERNAME`、`ADMIN_INITIAL_PASSWORD` 和 `ADMIN_NAME` 创建管理员。管理员登录后可在“用户管理”中分配普通用户账号、姓名和初始密码；普通用户首次登录后会被强制进入修改密码页面。管理员已存在时，修改环境变量不会自动重置其密码。
+首次启动会根据 `.env.development` 中的 `ADMIN_USERNAME`、`ADMIN_INITIAL_PASSWORD` 和 `ADMIN_NAME` 创建管理员。管理员登录后可在“用户管理”中分配普通用户账号、姓名和初始密码；普通用户首次登录后会被强制进入修改密码页面。管理员已存在时，修改环境变量不会自动重置其密码。
 
 ```bash
-docker compose ps
-docker compose logs -f app
-docker compose down  # 停止服务但保留数据
+docker compose --env-file .env.development ps
+docker compose --env-file .env.development logs -f app
+docker compose --env-file .env.development down  # 停止服务但保留数据
 ```
 
 不要随意执行 `docker compose down -v`，该命令会一并删除 PostgreSQL 和 MinIO 的本地数据卷。
@@ -167,6 +167,12 @@ bun run build
 cd ..
 ```
 
+直接运行后端时显式选择开发配置：
+
+```bash
+ENV_FILE=.env.development uv run --project backend python -m uvicorn backend.app:app --host 0.0.0.0 --port 8765
+```
+
 ## 8. 基础文件规范
 
 以下文件必须放在项目根目录的 `resources/` 文件夹中。文件名需要完全一致；如文件包含真实业务数据，请按仓库的数据安全策略决定是否提交 Git：
@@ -197,26 +203,47 @@ uv run --project backend python -m uvicorn backend.app:app --host 0.0.0.0 --port
 
 使用 `python -m uvicorn` 可以确保调用的是 `backend` 项目虚拟环境中的 Uvicorn；不要在根目录直接执行 `uv run uvicorn`，因为根目录不再包含 Python 项目配置。
 
+### 9.1 CloudBase 生产环境
+
+仓库中的 `.env.production.example` 仅列出空的 `KEY=`，不包含默认值、环境 ID、存储桶或凭据；实际 `.env.production` 被 Git 忽略，也不需要随镜像上传。CloudRun 生产环境直接注入配置和 Secret。目标结构为：
+
+- CloudRun 服务：`housing-cleaner`。
+- PostgreSQL：复用当前 CloudBase PG 实例，`DB_SCHEMA=clean`。
+- 对象存储：复用 CloudBase 环境绑定的存储桶，对象统一写入 `clean/` 前缀。
+- 云托管需要绑定 PostgreSQL 所在 VPC，并使用 PG 私网地址。
+- 容器读取平台注入的 `PORT`，健康检查路径为 `/healthz`。
+
+`.env.production.example` 中的 `DATABASE_URL`、`ADMIN_INITIAL_PASSWORD`、`TENCENTCLOUD_SECRETID` 和 `TENCENTCLOUD_SECRETKEY` 都是部署必填项，必须在 CloudRun 中配置真实值。CAM 凭据应限制为当前存储桶 `clean/*` 前缀的最小读写权限。
+
 ## 10. 配置项
 
 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- |
+| `APP_ENV` | `development` | 环境名称；`production` 会禁止在缺少 `DATABASE_URL` 时回退 SQLite |
+| `ENV_FILE` | 自动选择 | 显式指定 dotenv 文件，例如 `.env.development`；旧 `.env` 仅在显式指定时读取 |
 | `DATABASE_URL` | 本地 SQLite 兼容地址 | 容器环境必须设置为 PostgreSQL，例如 `postgresql+psycopg://user:password@postgres:5432/housing_cleaner` |
+| `DB_SCHEMA` | PostgreSQL 默认 Schema | 生产环境固定为 `clean`，SQLAlchemy 与 Alembic 都使用该 `search_path` |
 | `WORK_DIR` | `data/` | 上传和导出过程中的临时工作目录；容器中使用 `/tmp/housing-cleaner` |
 | `UV_PYTHON` | `backend/.python-version` | 临时覆盖 uv 使用的 Python 解释器 |
+| `STORAGE_BACKEND` | 自动兼容旧 MinIO 配置 | `minio`、`cloudbase` 或 `disabled` |
 | `MINIO_ENABLED` | `false` | 是否启用 MinIO 文件存储 |
 | `MINIO_ENDPOINT` | 无 | MinIO 服务地址，例如 `http://localhost:9000` |
 | `MINIO_ACCESS_KEY` / `MINIO_USERNAME` | 无 | MinIO Access Key；兼容旧变量名 `MINIO_USERNAME` |
 | `MINIO_SECRET_KEY` / `MINIO_PASSWORD` | 无 | MinIO Secret Key；兼容旧变量名 `MINIO_PASSWORD` |
 | `MINIO_BUCKET` | 无 | 存放清洗文件的 Bucket，必须由部署环境提供 |
 | `MINIO_PUBLIC_ENDPOINT` | 同 `MINIO_ENDPOINT` | 数据库中 OSS URL 使用的可访问地址 |
+| `CLOUDBASE_STORAGE_REGION` | `ap-shanghai` | CloudBase 存储桶所在 COS 地域 |
+| `CLOUDBASE_STORAGE_BUCKET` | 无 | CloudBase 环境绑定的完整存储桶名称 |
+| `CLOUDBASE_STORAGE_PREFIX` | `clean` | 当前项目在共享存储桶内的隔离前缀 |
+| `TENCENTCLOUD_SECRETID` / `TENCENTCLOUD_SECRETKEY` | 无 | 仅服务端使用的最小权限 CAM 凭据，生产环境通过平台注入 |
+| `TENCENTCLOUD_SESSIONTOKEN` | 无 | 使用临时 CAM 凭据时注入的可选 Token |
 | `ADMIN_USERNAME` | `admin` | 首次启动时创建的管理员账号 |
-| `ADMIN_INITIAL_PASSWORD` | 无 | 首次启动管理员密码，至少 8 位；必须通过 `.env` 或部署平台 Secret 提供 |
+| `ADMIN_INITIAL_PASSWORD` | 无 | 首次启动管理员密码，至少 8 位；必须通过本地环境文件或部署平台 Secret 提供 |
 | `ADMIN_NAME` | `系统管理员` | 管理员姓名 |
 | `SESSION_DAYS` | `7` | 登录会话有效天数，范围 1–30 天 |
 | `SESSION_COOKIE_SECURE` | `false` | HTTPS 生产环境必须设为 `true`，使登录 Cookie 仅通过 HTTPS 传输 |
 
-开发环境可以复制根目录的 `.env.example` 为 `.env`，再填写 PostgreSQL、MinIO 和管理员凭据。`.env` 已加入 Git 忽略规则，正式环境应通过部署平台的 Secret 注入配置，并启用 HTTPS 与 `SESSION_COOKIE_SECURE=true`。用户密码使用 bcrypt 哈希保存，登录令牌只以 SHA-256 摘要入库并通过 HttpOnly Cookie 传输，接口不会返回密码或密码哈希。当前项目约定使用 Bucket `clean`；清洗报告、异常详情、审计记录和规则快照保存为 PostgreSQL `JSONB`。浏览器下载统一经过 FastAPI 转发，不暴露容器内部的 `http://minio:9000` 地址。
+仓库只维护可提交的 `.env.development.example` 和 `.env.production.example` 模板，模板只有空的 `KEY=`；真实的 `.env`、`.env.development`、`.env.production` 及其他 `.env.*` 文件均被 Git 忽略。开发/测试使用 MinIO；生产使用 CloudBase 存储桶，真实数据库密码、管理员初始密码和 CAM 凭据必须通过 CloudRun Secret/环境变量注入。程序未指定 `APP_ENV` 时默认读取 `.env.development`，不会自动读取旧的根目录 `.env`；如需临时兼容，必须显式设置 `ENV_FILE=.env`。用户密码使用 bcrypt 哈希保存，登录令牌只以 SHA-256 摘要入库并通过 HttpOnly Cookie 传输，接口不会返回密码、密码哈希或运行时环境变量。浏览器下载统一经过 FastAPI 转发，不暴露 MinIO 内部地址或私有 COS 地址。
 
 数据库中的任务开始时间、完成时间和审计操作时间统一保存为带 `Z` 后缀的 UTC ISO 8601 字符串（例如 `2026-08-30T16:18:30Z`）。前端展示时通过浏览器 `Intl.DateTimeFormat` 转换为北京时间（`Asia/Shanghai`），不依赖访问者电脑的本地时区。
 
@@ -227,6 +254,7 @@ uv run --project backend python -m uvicorn backend.app:app --host 0.0.0.0 --port
 ├── backend/                  # FastAPI 后端包
 │   ├── app.py                # ASGI 应用和 API 路由
 │   ├── auth.py               # 用户、密码与会话认证
+│   ├── config.py             # development/production dotenv 选择
 │   ├── core.py               # 文件处理、匹配、清洗和导出核心逻辑
 │   ├── db.py                 # SQLAlchemy 数据访问和模型
 │   ├── migrations/           # Alembic PostgreSQL 迁移
@@ -260,6 +288,8 @@ uv run --project backend python -m uvicorn backend.app:app --host 0.0.0.0 --port
 │   └── 租房数据导入模版 .xlsx
 ├── Dockerfile                # Vue + FastAPI 业务镜像
 ├── compose.yaml              # app、PostgreSQL、MinIO 本地编排
+├── .env.development.example  # 可提交的本地开发/测试配置模板
+├── .env.production.example   # 可提交的 CloudBase 生产变量模板
 ├── data/                     # 旧 SQLite、规则和直接运行兼容数据（Git 忽略）
 └── outputs/                  # 旧版本本地导出兼容目录（Git 忽略）
 ```
@@ -268,7 +298,7 @@ uv run --project backend python -m uvicorn backend.app:app --host 0.0.0.0 --port
 
 ## 12. 输出文件规范
 
-MinIO 启用时，每次任务的文件会上传到 `clean/housing-cleaner/users/<用户账号>/<任务 ID>/`，不同用户拥有独立的对象目录；MinIO 未启用时才会在 `WORK_DIR/outputs/<任务 ID>/` 下生成回退文件：
+MinIO 启用时，每次任务的文件会上传到 `housing-cleaner/users/<用户账号>/<任务 ID>/`；CloudBase 生产环境会在该路径前追加 `clean/`，最终对象路径为 `clean/housing-cleaner/users/<用户账号>/<任务 ID>/`。外部存储禁用时才会在 `WORK_DIR/outputs/<任务 ID>/` 下生成回退文件：
 
 - `售房清洗导入_时间戳.xlsx` 或 `租房清洗导入_时间戳.xlsx`：最终导入文件。
 - `清洗报告.json`：MinIO 未启用的兼容模式下生成；容器模式下报告内容直接保存到 PostgreSQL `JSONB`，其中包含异常详情、字段级审计记录和清洗规则快照。

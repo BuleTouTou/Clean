@@ -26,4 +26,4 @@ RUN mkdir -p /tmp/housing-cleaner
 
 EXPOSE 8765
 
-CMD ["python", "-m", "uvicorn", "backend.app:app", "--host", "0.0.0.0", "--port", "8765", "--workers", "1"]
+CMD ["sh", "-c", "exec python -m uvicorn backend.app:app --host 0.0.0.0 --port \"${PORT:-8765}\" --workers 1"]

@@ -10,6 +10,7 @@ frontend/dist/
 .env.*
 !.env.development.example
 !.env.production.example
+cloudbaserc.json
 data/
 outputs/
 backend/openapi.json
